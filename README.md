@@ -1,0 +1,1 @@
+EduAgent is an AI-powered educational assistant that uses Retrieval-Augmented Generation (RAG) to provide accurate, context-aware responses from academic resources. It helps students learn efficiently through intelligent question answering and personalized educational support.

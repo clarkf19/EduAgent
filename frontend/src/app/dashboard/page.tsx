@@ -43,13 +43,14 @@ function getAuthToken(): string | null {
 
 async function apiFetch(path: string, opts: RequestInit = {}) {
   const token = getAuthToken();
-  const apiKey = typeof window !== "undefined" ? localStorage.getItem("gemini_api_key") : null;
-  return fetch(`http://127.0.0.1:8000${path}`, {
+  const apiKey = typeof window !== "undefined" ? localStorage.getItem("groq_api_key") : null;
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+  return fetch(`${API_BASE}${path}`, {
     ...opts,
     headers: {
       Authorization: token ? `Bearer ${token}` : "",
       "Content-Type": "application/json",
-      ...(apiKey ? { "X-Gemini-API-Key": apiKey } : {}),
+      ...(apiKey ? { "X-Groq-Api-Key": apiKey } : {}),
       ...(opts.headers || {}),
     },
   });
@@ -314,8 +315,8 @@ export default function Dashboard() {
               <p style={{ fontSize: "12.5px", color: "var(--text-secondary)", lineHeight: "1.5" }}>
                 Add PDFs (lecture slides, text-books, or personal study notes) to your knowledge base.
               </p>
-              <a href="/dashboard/upload" className="onboarding-button-hover" style={onboardingButtonStyle}>
-                📁 Go to Ingest Notes
+              <a href="/dashboard/quiz" className="onboarding-button-hover" style={onboardingButtonStyle}>
+                📁 Ingest Study Notes
               </a>
             </div>
 
@@ -772,3 +773,4 @@ const submitBtnStyle: React.CSSProperties = {
   transition: "all 0.2s ease",
   boxShadow: "0 0 16px rgba(99,102,241,0.3)",
 };
+

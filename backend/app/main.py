@@ -21,6 +21,7 @@ from .schemas import (
     QuizGenerateRequest, QuizGenerateResponse, QuizAttemptCreate, QuizAttemptResponse,
     StudyPlanRequest, StudyPlanResponse,
     StudyGoalCreate, StudyGoalResponse,
+    CoachReportRequest, CoachReportResponse,
 )
 from .auth import get_password_hash, verify_password, create_access_token, get_current_user
 from .chroma_client import (
@@ -31,6 +32,7 @@ from .document_processor import parse_pdf_to_chunks
 from .agents.explainer_agent import run_explainer
 from .agents.quiz_agent import run_quiz_generator
 from .agents.study_plan_agent import run_study_plan
+from .agents.coach_agent import run_coach_report
 from .predictor import PerformancePredictor
 
 logger = logging.getLogger(__name__)
@@ -62,9 +64,20 @@ ALLOWED_SUBJECTS = [
 app = FastAPI(title="EduAgent API", version="0.2.0")
 
 # Setup CORS
+_cors_origins_env = os.getenv("CORS_ALLOWED_ORIGINS", "")
+_cors_origins = (
+    [o.strip() for o in _cors_origins_env.split(",") if o.strip()]
+    if _cors_origins_env
+    else [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+    ]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -597,6 +610,10 @@ async def upload_document(
 
     # Index chunks in ChromaDB
     try:
+        for chunk in chunks:
+            if "metadata" not in chunk:
+                chunk["metadata"] = {}
+            chunk["metadata"]["subject"] = subject
         num_indexed = index_document_chunks(chunks)
     except Exception as exc:
         db.delete(db_doc)
@@ -784,12 +801,12 @@ def get_dashboard_analytics(current_user: User = Depends(get_current_user), db: 
 # Multi-Agent AI Endpoints
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Helper to check if Gemini key is set to a real value
-def get_gemini_api_key(x_gemini_api_key: Optional[str] = Header(None)) -> Optional[str]:
-    if x_gemini_api_key and x_gemini_api_key.strip() and x_gemini_api_key.strip().lower() not in ["null", "undefined", ""]:
-        return x_gemini_api_key.strip()
-    key = os.getenv("GEMINI_API_KEY")
-    if not key or key == "your_gemini_api_key_here":
+# Helper to check if Groq key is set to a real value
+def get_groq_api_key(x_groq_api_key: Optional[str] = Header(None)) -> Optional[str]:
+    if x_groq_api_key and x_groq_api_key.strip() and x_groq_api_key.strip().lower() not in ["null", "undefined", ""]:
+        return x_groq_api_key.strip()
+    key = os.getenv("GROQ_API_KEY")
+    if not key or key in ["your_groq_api_key_here", "your_gemini_api_key_here"]:
         return None
     return key
 
@@ -798,10 +815,10 @@ def get_gemini_api_key(x_gemini_api_key: Optional[str] = Header(None)) -> Option
 def chat_explain(
     req: ChatRequest,
     current_user: User = Depends(get_current_user),
-    key: Optional[str] = Depends(get_gemini_api_key),
+    key: Optional[str] = Depends(get_groq_api_key),
 ):
     if not key:
-        logger.info("GEMINI_API_KEY is not set. Returning mock explanation.")
+        logger.info("GROQ_API_KEY is not set. Returning mock explanation.")
         return ChatResponse(
             answer=f"### Understanding {req.subject or 'your concept'} (Demo Mode)\nThis is a demonstration explanation because `GEMINI_API_KEY` is not configured. Once you add your key, I will explain concepts related to **{req.subject or 'your uploaded notes'}** using RAG.",
             sources=[
@@ -842,10 +859,10 @@ def chat_explain(
 def generate_quiz(
     req: QuizGenerateRequest,
     current_user: User = Depends(get_current_user),
-    key: Optional[str] = Depends(get_gemini_api_key),
+    key: Optional[str] = Depends(get_groq_api_key),
 ):
     if not key:
-        logger.info("GEMINI_API_KEY not set — using topic-aware demo questions.")
+        logger.info("GROQ_API_KEY not set — using topic-aware demo questions.")
         topic_label = req.topic or "General Knowledge"
         diff_label = req.difficulty or "Intermediate"
         mock_questions = _generate_topic_mock_questions(topic_label, diff_label, req.num_questions or 5)
@@ -855,7 +872,7 @@ def generate_quiz(
             difficulty=req.difficulty,
             num_questions=len(mock_questions),
             used_knowledge_base=False,
-            model="demo-mode-add-gemini-key",
+            model="demo-mode-add-groq-key",
         )
 
     try:
@@ -876,9 +893,26 @@ def generate_quiz(
         )
     except Exception as e:
         logger.exception("Quiz generator agent failed")
+        err_str = str(e)
+        if "RESOURCE_EXHAUSTED" in err_str or "429" in err_str:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    "Gemini API quota exhausted. Your API key has used up its free-tier limit. "
+                    "Please get a new key at https://aistudio.google.com/apikey"
+                ),
+            )
+        if "API_KEY_INVALID" in err_str or "401" in err_str or "403" in err_str:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=(
+                    "Invalid Gemini API key. Please get a valid key at https://aistudio.google.com/apikey "
+                    "(keys start with 'AIza...')"
+                ),
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Quiz generator error: {str(e)}",
+            detail=f"Quiz generator error: {err_str}",
         )
 
 
@@ -926,12 +960,51 @@ def list_quiz_attempts(
     )
 
 
+@app.post("/api/quiz/coach-report", response_model=CoachReportResponse)
+def get_quiz_coach_report(
+    req: CoachReportRequest,
+    current_user: User = Depends(get_current_user),
+    key: Optional[str] = Depends(get_groq_api_key),
+):
+    try:
+        # Convert pydantic models to dictionaries
+        questions_dicts = []
+        for q in req.questions:
+            questions_dicts.append({
+                "id": q.id,
+                "question": q.question,
+                "options": q.options,
+                "correct_answer": q.correct_answer,
+                "explanation": q.explanation,
+                "difficulty": q.difficulty,
+            })
+        
+        res = run_coach_report(
+            questions=questions_dicts,
+            answers=req.answers,
+            score=req.score,
+            subject=req.subject,
+            topic=req.topic,
+            api_key=key,
+        )
+        return CoachReportResponse(
+            report=res["report"],
+            model=res["model"]
+        )
+    except Exception as e:
+        logger.exception("Coach report agent failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Coach report generator error: {str(e)}",
+        )
+
+
 @app.post("/api/study-plan", response_model=StudyPlanResponse)
 def generate_study_plan_endpoint(
     req: StudyPlanRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    key: Optional[str] = Depends(get_gemini_api_key),
+    key: Optional[str] = Depends(get_groq_api_key),
 ):
     recent_attempts = (
         db.query(QuizAttempt)

@@ -10,7 +10,7 @@ Manages the ChromaDB persistent client and provides helpers for:
 
 import os
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from dotenv import load_dotenv
 import chromadb
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 CHROMA_DB_PATH = os.getenv(
     "CHROMA_DB_PATH",
-    "C:/Users/clark/.gemini/antigravity-ide/scratch/eduagent/chroma_db",
+    os.path.join(os.path.dirname(__file__), "..", "..", "chroma_db"),
 )
 COLLECTION_NAME = "eduagent_documents"
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
@@ -149,30 +149,47 @@ def get_document_chunk_count(document_id: int) -> int:
 
 def semantic_search(
     query: str,
-    user_id: int,
     n_results: int = 5,
-) -> List[Dict[str, Any]]:
+    where: Optional[Dict[str, Any]] = None,
+    user_id: Optional[int] = None,
+) -> Dict[str, Any]:
     """
-    Perform a semantic search against the ChromaDB collection filtered by user_id.
+    Perform a semantic search against the ChromaDB collection.
 
-    Returns a list of result dicts with keys: text, metadata, distance.
+    Returns a dictionary containing "chunks": list of result dicts with keys: text, metadata, distance.
     """
     collection = get_or_create_collection()
     query_embedding = _embedding_model.encode([query]).tolist()
 
+    # Build or merge filter dictionary using ChromaDB's $and logic if multiple filters exist
+    filter_dict = {}
+    conditions = []
+    if where:
+        for k, v in where.items():
+            conditions.append({k: v})
+    if user_id is not None:
+        conditions.append({"user_id": str(user_id)})
+
+    if len(conditions) == 1:
+        filter_dict = conditions[0]
+    elif len(conditions) > 1:
+        filter_dict = {"$and": conditions}
+
     results = collection.query(
         query_embeddings=query_embedding,
         n_results=n_results,
-        where={"user_id": str(user_id)},
+        where=filter_dict if filter_dict else None,
         include=["documents", "metadatas", "distances"],
     )
 
     output = []
-    for text, meta, dist in zip(
-        results["documents"][0],
-        results["metadatas"][0],
-        results["distances"][0],
-    ):
-        output.append({"text": text, "metadata": meta, "distance": dist})
+    if results and results.get("documents") and len(results["documents"]) > 0:
+        docs = results["documents"][0]
+        metas = results["metadatas"][0] if results.get("metadatas") else [{} for _ in docs]
+        dists = results["distances"][0] if results.get("distances") else [0.0 for _ in docs]
+        
+        for text, meta, dist in zip(docs, metas, dists):
+            output.append({"text": text, "metadata": meta, "distance": dist})
 
-    return output
+    return {"chunks": output}
+

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 
@@ -20,6 +20,8 @@ function useWindowWidth() {
   return width;
 }
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -33,20 +35,113 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [searchQuery, setSearchQuery] = useState("");
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [geminiKey, setGeminiKey] = useState("");
+  const [groqKey, setgroqKey] = useState("");
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [analyticsData, setAnalyticsData] = useState<any>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // ── Pomodoro / Study Session Tracker ────────────────────────────────────────
+  const [sessionActive, setSessionActive] = useState(false);
+  const [sessionTopic, setSessionTopic] = useState("");
+  const [sessionSubject, setSessionSubject] = useState("General Study");
+  const [sessionElapsed, setSessionElapsed] = useState(0); // seconds
+  const [pomodoroOpen, setPomodoroOpen] = useState(false);
+  const [sessionStopped, setSessionStopped] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Auto-stop timer on unmount
+  useEffect(() => {
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, []);
+
+  const startStudySession = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/api/sessions/start`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ topic_id: null }),
+      });
+      if (res.ok) {
+        setSessionActive(true);
+        setSessionStopped(false);
+        setSessionElapsed(0);
+        timerRef.current = setInterval(() => setSessionElapsed(prev => prev + 1), 1000);
+      }
+    } catch (e) { console.error("Failed to start session", e); }
+  };
+
+  const stopStudySession = async () => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    try {
+      const token = localStorage.getItem("token");
+      await fetch(`${API_BASE}/api/sessions/stop`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setSessionActive(false);
+      setSessionStopped(true);
+    } catch (e) { console.error("Failed to stop session", e); }
+  };
+
+  const formatTimer = (s: number) => {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    return h > 0
+      ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
+      : `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "-0")}`;
+  };
+
+  const fetchAnalytics = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) return;
+      const response = await fetch(`${API_BASE}/api/analytics/dashboard`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setAnalyticsData(data);
+      }
+    } catch (e) {
+      console.error("Failed to fetch analytics for heatmap", e);
+    }
+  };
+
+  useEffect(() => {
+    if (profileOpen) {
+      fetchAnalytics();
+    }
+  }, [profileOpen]);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setProfileOpen(false);
+      }
+    };
+    if (profileOpen) {
+      document.addEventListener("mousedown", handleOutsideClick);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+    };
+  }, [profileOpen]);
 
   // Load API key from localStorage on mount
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const storedKey = localStorage.getItem("gemini_api_key") || "";
-      setGeminiKey(storedKey);
+      const storedKey = localStorage.getItem("groq_api_key") || "";
+      setgroqKey(storedKey);
     }
   }, []);
 
   const handleSaveKey = () => {
     if (typeof window !== "undefined") {
-      localStorage.setItem("gemini_api_key", geminiKey.trim());
+      localStorage.setItem("groq_api_key", groqKey.trim());
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
     }
@@ -54,8 +149,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const handleClearKey = () => {
     if (typeof window !== "undefined") {
-      localStorage.removeItem("gemini_api_key");
-      setGeminiKey("");
+      localStorage.removeItem("groq_api_key");
+      setgroqKey("");
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
     }
@@ -81,7 +176,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
     const fetchProfile = async () => {
       try {
-        const response = await fetch("http://localhost:8000/api/auth/me", {
+        const response = await fetch(`${API_BASE}/api/auth/me`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (response.ok) {
@@ -110,7 +205,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { label: "AI Tutor Chat", icon: "💬", path: "/dashboard/chat" },
     { label: "Practice Quizzes", icon: "📝", path: "/dashboard/quiz" },
     { label: "Study Planner", icon: "📅", path: "/dashboard/planner" },
-    { label: "Upload Notes", icon: "📁", path: "/dashboard/upload" },
   ];
 
   if (!user) {
@@ -177,6 +271,78 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           })}
         </nav>
 
+        {/* ── Pomodoro Study Session Tracker ─────────────────────────── */}
+        {!effectiveCollapsed && (
+          <div style={pomodoroContainerStyle}>
+            <div
+              onClick={() => setPomodoroOpen(!pomodoroOpen)}
+              style={pomodoroHeaderStyle}
+            >
+              <span style={{ fontSize: "14px" }}>{sessionActive ? "🔴" : "⏱️"}</span>
+              <span style={{ fontSize: "12px", fontWeight: 600, color: sessionActive ? "#34d399" : "var(--text-secondary)", flex: 1 }}>
+                {sessionActive ? `${formatTimer(sessionElapsed)}` : "Study Timer"}
+              </span>
+              <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>{pomodoroOpen ? "▲" : "▼"}</span>
+            </div>
+
+            {pomodoroOpen && (
+              <div style={pomodoroBodyStyle}>
+                {!sessionActive && (
+                  <>
+                    <div style={{ marginBottom: "8px" }}>
+                      <label style={pomodoroLabelStyle}>Subject</label>
+                      <select
+                        value={sessionSubject}
+                        onChange={e => setSessionSubject(e.target.value)}
+                        style={pomodoroSelectStyle}
+                      >
+                        {["General Study", "Computer Networks", "Algorithms", "Database Systems", "System Design", "Mathematics", "Machine Learning"].map(s => (
+                          <option key={s} value={s} style={{ backgroundColor: "#0D1117", color: "#F3F4F6" }}>{s}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ marginBottom: "10px" }}>
+                      <label style={pomodoroLabelStyle}>Topic (optional)</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Binary Trees"
+                        value={sessionTopic}
+                        onChange={e => setSessionTopic(e.target.value)}
+                        style={pomodoroInputStyle}
+                      />
+                    </div>
+                    <button onClick={startStudySession} style={pomodoroStartBtnStyle}>
+                      ▶ Start Session
+                    </button>
+                  </>
+                )}
+
+                {sessionActive && (
+                  <>
+                    <div style={{ textAlign: "center", marginBottom: "10px" }}>
+                      <div style={{ fontSize: "28px", fontWeight: 700, color: "#34d399", fontFamily: "monospace" }}>
+                        {formatTimer(sessionElapsed)}
+                      </div>
+                      <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
+                        {sessionSubject}{sessionTopic ? ` · ${sessionTopic}` : ""}
+                      </div>
+                    </div>
+                    <button onClick={stopStudySession} style={pomodoroStopBtnStyle}>
+                      ⏹ Stop & Save
+                    </button>
+                  </>
+                )}
+
+                {sessionStopped && !sessionActive && (
+                  <div style={{ fontSize: "11px", color: "#34d399", textAlign: "center", padding: "4px 0" }}>
+                    ✓ Session saved! Heatmap updated.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={sidebarFooterStyle}>
           {!effectiveCollapsed && (
             <div style={userProfileStyle}>
@@ -225,30 +391,96 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
 
           <div style={topbarActionsStyle}>
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              style={settingsBtnStyle(!!geminiKey)}
-              title="Configure AI API Key"
-            >
-              🔑 {geminiKey ? "Connected" : "Demo Mode"}
-            </button>
-
             {!isMobile && (
               <select
                 style={subjectSelectorStyle}
                 value={selectedSubject}
                 onChange={(e) => setSelectedSubject(e.target.value)}
               >
-                <option value="All Subjects">All Subjects</option>
-                <option value="Computer Networks">Computer Networks</option>
-                <option value="Algorithms">Algorithms</option>
-                <option value="Database Systems">Database Systems</option>
-                <option value="System Design">System Design</option>
+                <option value="All Subjects" style={{ backgroundColor: "#0D1117", color: "#F3F4F6" }}>All Subjects</option>
+                <option value="Computer Networks" style={{ backgroundColor: "#0D1117", color: "#F3F4F6" }}>Computer Networks</option>
+                <option value="Algorithms" style={{ backgroundColor: "#0D1117", color: "#F3F4F6" }}>Algorithms</option>
+                <option value="Database Systems" style={{ backgroundColor: "#0D1117", color: "#F3F4F6" }}>Database Systems</option>
+                <option value="System Design" style={{ backgroundColor: "#0D1117", color: "#F3F4F6" }}>System Design</option>
               </select>
             )}
 
-            <div style={avatarStyle}>
-              {user.email.substring(0, 2).toUpperCase()}
+            <div style={{ position: "relative" }} ref={dropdownRef}>
+              <div
+                onClick={() => setProfileOpen(!profileOpen)}
+                style={{ ...avatarStyle, cursor: "pointer" }}
+                role="button"
+                aria-haspopup="true"
+                aria-expanded={profileOpen}
+              >
+                {user.email.substring(0, 2).toUpperCase()}
+              </div>
+
+              {profileOpen && (
+                <div style={profileDropdownStyle} className="glass-panel">
+                  <div style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid var(--border-glass)", paddingBottom: "10px" }}>
+                    <span style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {user.email}
+                    </span>
+                    <span style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
+                      Learning Swarm Active
+                    </span>
+                  </div>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>
+                      30-Day Activity Heatmap
+                    </span>
+                    {analyticsData ? (
+                      <>
+                        <div style={{
+                          display: "grid",
+                          gridTemplateColumns: "repeat(10, 14px)",
+                          gap: "4px",
+                          marginTop: "4px"
+                        }}>
+                          {[...(analyticsData.heatmap || [])].reverse().map((day: any, i: number) => (
+                            <div
+                              key={i}
+                              style={{
+                                width: "14px",
+                                height: "14px",
+                                borderRadius: "3px",
+                                backgroundColor: getHeatmapColor(day.hours),
+                                transition: "all 0.2s ease",
+                              }}
+                              title={`${day.date}: ${day.hours.toFixed(1)} hrs`}
+                            />
+                          ))}
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "10px", color: "var(--text-muted)", marginTop: "2px" }}>
+                          <span>Less</span>
+                          <div style={{ display: "flex", gap: "2px" }}>
+                            <div style={{ width: "8px", height: "8px", borderRadius: "1px", backgroundColor: "rgba(255,255,255,0.06)" }} />
+                            <div style={{ width: "8px", height: "8px", borderRadius: "1px", backgroundColor: "#0e4429" }} />
+                            <div style={{ width: "8px", height: "8px", borderRadius: "1px", backgroundColor: "#006d32" }} />
+                            <div style={{ width: "8px", height: "8px", borderRadius: "1px", backgroundColor: "#26a641" }} />
+                            <div style={{ width: "8px", height: "8px", borderRadius: "1px", backgroundColor: "#39d353" }} />
+                          </div>
+                          <span>More</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ fontSize: "11px", color: "var(--text-muted)", padding: "4px 0" }}>
+                        Loading heatmap...
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={handleSignOut}
+                    style={dropdownLogoutBtnStyle}
+                    className="glass-btn"
+                  >
+                    🚪 Log Out / Sign Out
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </header>
@@ -256,7 +488,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Page Content */}
         <main style={contentStyle}>{children}</main>
 
-        {/* Gemini Key Modal */}
+        {/* GROQ Key Modal */}
         {isSettingsOpen && (
           <div style={modalOverlayStyle} onClick={() => setIsSettingsOpen(false)}>
             <div style={modalContentStyle} onClick={(e) => e.stopPropagation()}>
@@ -267,21 +499,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 ✕
               </button>
               <h3 style={{ fontSize: "20px", fontWeight: "600", marginBottom: "12px", display: "flex", alignItems: "center", gap: "8px" }}>
-                🔑 Gemini API Settings
+                🔑 Groq API Settings
               </h3>
               <p style={{ color: "var(--text-secondary)", fontSize: "14px", lineHeight: "1.5", marginBottom: "20px" }}>
-                Provide a Google Gemini API Key to enable the platform's multi-agent AI features, including generating custom quizzes on any topic using general knowledge, answering complex conceptual questions, and creating custom study planners.
+                Provide a Google Groq API Key to enable the platform's multi-agent AI features, including generating custom quizzes on any topic using general knowledge, answering complex conceptual questions, and creating custom study planners.
               </p>
               
               <div style={{ marginBottom: "20px" }}>
                 <label style={{ display: "block", fontSize: "12px", fontWeight: "600", color: "var(--text-muted)", marginBottom: "8px", textTransform: "uppercase" }}>
-                  Gemini API Key
+                  Groq API Key
                 </label>
                 <input
                   type="password"
                   placeholder="AIzaSy..."
-                  value={geminiKey}
-                  onChange={(e) => setGeminiKey(e.target.value)}
+                  value={groqKey}
+                  onChange={(e) => setgroqKey(e.target.value)}
                   style={modalInputStyle}
                 />
                 <span style={{ display: "block", fontSize: "12px", color: "var(--text-muted)", marginTop: "6px" }}>
@@ -298,7 +530,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
 
               <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
-                {geminiKey && (
+                {groqKey && (
                   <button
                     onClick={handleClearKey}
                     style={clearBtnStyle}
@@ -617,14 +849,14 @@ const hamburgerLineStyle: React.CSSProperties = {
   borderRadius: "2px",
 };
 
-// ── Gemini Modal Styles ──────────────────────────────────────────────────────
+// ── GROQ Modal Styles ──────────────────────────────────────────────────────
 
 const settingsBtnStyle = (hasKey: boolean): React.CSSProperties => ({
   padding: "8px 14px",
-  background: hasKey ? "rgba(16, 185, 129, 0.15)" : "var(--bg-glass)",
-  border: hasKey ? "1px solid rgba(16, 185, 129, 0.4)" : "1px solid var(--border-glass)",
+  background: hasKey ? "rgba(16, 185, 129, 0.12)" : "rgba(251, 191, 36, 0.08)",
+  border: hasKey ? "1px solid rgba(16, 185, 129, 0.3)" : "1px solid rgba(251, 191, 36, 0.3)",
   borderRadius: "var(--border-radius)",
-  color: hasKey ? "#34d399" : "var(--text-primary)",
+  color: hasKey ? "#34d399" : "#fbbf24",
   fontSize: "13px",
   fontWeight: 600,
   cursor: "pointer",
@@ -716,4 +948,133 @@ const toastStyle: React.CSSProperties = {
   fontWeight: 500,
   boxShadow: "0 4px 12px rgba(16, 185, 129, 0.3)",
 };
+
+const profileDropdownStyle: React.CSSProperties = {
+  position: "absolute",
+  top: "calc(100% + 8px)",
+  right: 0,
+  width: "240px",
+  backgroundColor: "rgba(13, 17, 23, 0.95)",
+  backdropFilter: "blur(16px)",
+  border: "1px solid var(--border-glass-hover)",
+  borderRadius: "12px",
+  padding: "16px",
+  display: "flex",
+  flexDirection: "column",
+  gap: "12px",
+  boxShadow: "0 10px 25px rgba(0, 0, 0, 0.5)",
+  zIndex: 1000,
+};
+
+const dropdownLogoutBtnStyle: React.CSSProperties = {
+  marginTop: "8px",
+  padding: "8px",
+  borderRadius: "8px",
+  background: "rgba(239, 68, 68, 0.1)",
+  border: "1px solid rgba(239, 68, 68, 0.2)",
+  color: "#EF4444",
+  fontSize: "12px",
+  fontWeight: 600,
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: "6px",
+  width: "100%",
+  transition: "all var(--transition-smooth)",
+};
+
+const getHeatmapColor = (hours: number) => {
+  if (hours === 0) return "rgba(255, 255, 255, 0.06)";
+  if (hours <= 0.5) return "#0e4429";
+  if (hours <= 1.5) return "#006d32";
+  if (hours <= 3.0) return "#26a641";
+  return "#39d353";
+};
+
+// ── Pomodoro Tracker Styles ──────────────────────────────────────────────────
+
+const pomodoroContainerStyle: React.CSSProperties = {
+  borderRadius: "10px",
+  border: "1px solid var(--border-glass)",
+  overflow: "hidden",
+  backgroundColor: "rgba(255,255,255,0.02)",
+  marginTop: "8px",
+};
+
+const pomodoroHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  padding: "10px 12px",
+  cursor: "pointer",
+  userSelect: "none",
+};
+
+const pomodoroBodyStyle: React.CSSProperties = {
+  padding: "10px 12px 12px",
+  borderTop: "1px solid var(--border-glass)",
+};
+
+const pomodoroLabelStyle: React.CSSProperties = {
+  display: "block",
+  fontSize: "10px",
+  fontWeight: 600,
+  color: "var(--text-muted)",
+  textTransform: "uppercase",
+  letterSpacing: "0.5px",
+  marginBottom: "4px",
+};
+
+const pomodoroSelectStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "6px 8px",
+  background: "rgba(0,0,0,0.25)",
+  border: "1px solid var(--border-glass)",
+  borderRadius: "6px",
+  color: "var(--text-primary)",
+  fontSize: "12px",
+  outline: "none",
+};
+
+const pomodoroInputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "6px 8px",
+  background: "rgba(0,0,0,0.25)",
+  border: "1px solid var(--border-glass)",
+  borderRadius: "6px",
+  color: "var(--text-primary)",
+  fontSize: "12px",
+  outline: "none",
+  fontFamily: "inherit",
+  boxSizing: "border-box",
+};
+
+const pomodoroStartBtnStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "8px",
+  background: "rgba(16, 185, 129, 0.15)",
+  border: "1px solid rgba(16, 185, 129, 0.35)",
+  borderRadius: "6px",
+  color: "#34d399",
+  fontSize: "12px",
+  fontWeight: 600,
+  cursor: "pointer",
+  transition: "all 0.2s ease",
+};
+
+const pomodoroStopBtnStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "8px",
+  background: "rgba(239, 68, 68, 0.1)",
+  border: "1px solid rgba(239, 68, 68, 0.25)",
+  borderRadius: "6px",
+  color: "#f87171",
+  fontSize: "12px",
+  fontWeight: 600,
+  cursor: "pointer",
+  transition: "all 0.2s ease",
+};
+
+
 

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useRouter } from "next/navigation";
 
 interface UploadStage {
   id: string;
@@ -62,13 +63,14 @@ function getAuthToken(): string | null {
 
 async function apiFetch(path: string, opts: RequestInit = {}) {
   const token = getAuthToken();
-  const apiKey = typeof window !== "undefined" ? localStorage.getItem("gemini_api_key") : null;
-  return fetch(`http://127.0.0.1:8000${path}`, {
+  const apiKey = typeof window !== "undefined" ? localStorage.getItem("groq_api_key") : null;
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+  return fetch(`${API_BASE}${path}`, {
     ...opts,
     headers: {
       Authorization: token ? `Bearer ${token}` : "",
       "Content-Type": "application/json",
-      ...(apiKey ? { "X-Gemini-API-Key": apiKey } : {}),
+      ...(apiKey ? { "X-Groq-Api-Key": apiKey } : {}),
       ...(opts.headers || {}),
     },
   });
@@ -315,8 +317,10 @@ function UploadProgressOverlay({
 
 // --- Main Quiz Page Component ---
 export default function QuizPage() {
+  const router = useRouter();
   const [step, setStep] = useState<"config" | "running" | "result" | "theory">("config");
-  const [mode, setMode] = useState<"mcq" | "theory" | "upload">("mcq");
+  const [mode, setMode] = useState<"mcq" | "theory" | "upload">("upload");
+  const [selectedDoc, setSelectedDoc] = useState<any | null>(null);
   const [subject, setSubject] = useState("All Subjects");
   const [topic, setTopic] = useState("");
   const [difficulty, setDifficulty] = useState("Intermediate");
@@ -328,6 +332,8 @@ export default function QuizPage() {
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [documents, setDocuments] = useState<any[]>([]);
   const [savingAttempt, setSavingAttempt] = useState(false);
+  const [coachReport, setCoachReport] = useState<string | null>(null);
+  const [coachLoading, setCoachLoading] = useState(false);
 
   const [theoryResult, setTheoryResult] = useState<{
     answer: string;
@@ -337,6 +343,7 @@ export default function QuizPage() {
   } | null>(null);
 
   const [selectedSource, setSelectedSource] = useState<any | null>(null);
+  const [hasApiKey, setHasApiKey] = useState(false);
 
   // ── Upload-in-quiz state ──────────────────────────────────────────────────
   const [uploadSubject, setUploadSubject] = useState("Other");
@@ -349,9 +356,15 @@ export default function QuizPage() {
   const [resultChunks, setResultChunks] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState("");
   const [uploadSuccess, setUploadSuccess] = useState("");
-  const [postUploadMode, setPostUploadMode] = useState<"mcq" | "theory" | "explain" | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const stageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasTriggeredRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setHasApiKey(Boolean(localStorage.getItem("groq_api_key")));
+    }
+  }, []);
 
   const animateStages = (onComplete: () => void): (() => void) => {
     let cancelled = false;
@@ -410,10 +423,10 @@ export default function QuizPage() {
     const cancelAnim = animateStages(() => { animationDone = true; finalize(); });
     try {
       const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-      const apiKey = typeof window !== "undefined" ? localStorage.getItem("gemini_api_key") : null;
+      const apiKey = typeof window !== "undefined" ? localStorage.getItem("groq_api_key") : null;
       const headers: Record<string, string> = { Authorization: token ? `Bearer ${token}` : "" };
-      if (apiKey) headers["X-Gemini-API-Key"] = apiKey;
-      const res = await fetch("http://127.0.0.1:8000/api/documents/upload", { method: "POST", body: form, headers });
+      if (apiKey) headers["X-Groq-Api-Key"] = apiKey;
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/documents/upload`, { method: "POST", body: form, headers });
       const data = await res.json();
       apiResult = { ok: res.ok, data };
       apiResolved = true;
@@ -455,19 +468,44 @@ export default function QuizPage() {
     return documents.filter((d) => d.subject === subj).length;
   };
 
-  const handleStartQuiz = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!topic.trim()) return;
+  const startQuizOrTheory = async (params: {
+    mode: "mcq" | "theory";
+    subject: string;
+    topic: string;
+    numQuestions?: number;
+  }) => {
+    setMode(params.mode);
+    setSubject(params.subject);
+    setTopic(params.topic);
+    if (params.numQuestions) {
+      setNumQuestions(params.numQuestions);
+    }
 
     setLoading(true);
+    const hasDocResources = getDocCountForSubject(params.subject) > 0;
+    const effectiveTopicLabel = params.subject === "All Subjects" ? "your uploaded study materials" : `${params.subject} notes`;
+    
+    let finalPrompt = params.topic.trim();
+    if (!finalPrompt && hasDocResources) {
+      finalPrompt = params.mode === "mcq"
+        ? `Practice questions based on ${effectiveTopicLabel}`
+        : `Explain and summarize the key concepts from ${effectiveTopicLabel}.`;
+    }
+
+    if (!finalPrompt) {
+      alert(`Please enter a topic or upload notes first so EduAgent can generate ${params.mode === "mcq" ? "a quiz" : "a theory explanation"}.`);
+      setLoading(false);
+      return;
+    }
+
     try {
-      if (mode === "mcq") {
+      if (params.mode === "mcq") {
         const res = await apiFetch("/api/quiz/generate", {
           method: "POST",
           body: JSON.stringify({
-            topic,
+            topic: finalPrompt,
             difficulty,
-            num_questions: numQuestions,
+            num_questions: params.numQuestions ?? numQuestions,
           }),
         });
         if (!res.ok) throw new Error("Quiz generation failed");
@@ -481,8 +519,8 @@ export default function QuizPage() {
         const res = await apiFetch("/api/chat", {
           method: "POST",
           body: JSON.stringify({
-            question: `Please explain the concept of "${topic}" in detail, highlighting key aspects and structures.`,
-            subject: subject === "All Subjects" ? undefined : subject,
+            question: finalPrompt,
+            subject: params.subject === "All Subjects" ? undefined : params.subject,
           }),
         });
         if (!res.ok) throw new Error("Theory explanation failed");
@@ -491,11 +529,46 @@ export default function QuizPage() {
         setStep("theory");
       }
     } catch (err) {
-      alert(`Failed to generate ${mode === "mcq" ? "quiz" : "theory explanation"}. Please ensure the backend is running.`);
+      alert(`Failed to generate ${params.mode === "mcq" ? "quiz" : "theory explanation"}. Please ensure the backend is running and your Groq API Key is configured correctly.`);
     } finally {
       setLoading(false);
     }
   };
+
+  const handleStartQuiz = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (mode === "upload") return;
+    await startQuizOrTheory({ mode, subject, topic, numQuestions });
+  };
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && !hasTriggeredRef.current && documents.length > 0) {
+      const searchParams = new URLSearchParams(window.location.search);
+      const paramMode = searchParams.get("mode");
+      const paramSubject = searchParams.get("subject");
+      const paramNumQuestions = searchParams.get("numQuestions");
+      const paramTrigger = searchParams.get("trigger");
+
+      if (paramTrigger === "true" && paramSubject) {
+        hasTriggeredRef.current = true;
+        const decodedSubject = decodeURIComponent(paramSubject);
+        const decodedMode = (paramMode === "mcq" || paramMode === "theory") ? paramMode : "mcq";
+        const decodedNumQs = paramNumQuestions ? parseInt(paramNumQuestions, 10) : 5;
+        const generatedTopic = `${decodedSubject} notes`;
+
+        startQuizOrTheory({
+          mode: decodedMode,
+          subject: decodedSubject,
+          topic: generatedTopic,
+          numQuestions: decodedNumQs,
+        });
+
+        // Clean up URL parameters
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+      }
+    }
+  }, [documents]);
 
   const handleOptionSelect = (optionLetter: string) => {
     setAnswers((prev) => ({
@@ -523,22 +596,51 @@ export default function QuizPage() {
   const submitQuiz = async () => {
     setStep("result");
     setSavingAttempt(true);
+    setCoachLoading(true);
+    setCoachReport(null);
 
     const score = calculateScore();
+    
+    const attemptPromise = apiFetch("/api/quiz/attempt", {
+      method: "POST",
+      body: JSON.stringify({
+        score,
+        total_questions: questions.length,
+        difficulty,
+        topic,
+        subject: subject === "All Subjects" ? undefined : subject,
+      }),
+    }).then(async (res) => {
+      if (res.ok) {
+        fetchAttempts();
+      }
+    }).catch(() => { /* ignore */ });
+
+    const reportPromise = apiFetch("/api/quiz/coach-report", {
+      method: "POST",
+      body: JSON.stringify({
+        questions,
+        answers,
+        score,
+        subject: subject === "All Subjects" ? undefined : subject,
+        topic,
+      }),
+    }).then(async (res) => {
+      if (res.ok) {
+        const data = await res.json();
+        setCoachReport(data.report);
+      } else {
+        setCoachReport("⚠️ Failed to generate AI Coach Report. Please verify your Groq API Key and connection.");
+      }
+    }).catch(() => {
+      setCoachReport("⚠️ Network error while fetching AI Coach Report.");
+    });
+
     try {
-      await apiFetch("/api/quiz/attempt", {
-        method: "POST",
-        body: JSON.stringify({
-          score,
-          total_questions: questions.length,
-          difficulty,
-          topic,
-          subject: subject === "All Subjects" ? undefined : subject,
-        }),
-      });
-      fetchAttempts();
+      await Promise.all([attemptPromise, reportPromise]);
     } catch { /* ignore */ } finally {
       setSavingAttempt(false);
+      setCoachLoading(false);
     }
   };
 
@@ -548,6 +650,7 @@ export default function QuizPage() {
     setAnswers({});
     setCurrentIdx(0);
     setTheoryResult(null);
+    setCoachReport(null);
   };
 
   const getOptionLetter = (optStr: string) => {
@@ -572,102 +675,215 @@ export default function QuizPage() {
             <div className="glass-panel" style={panelStyle}>
               {/* Mode Tabs */}
               <div style={tabContainerStyle}>
+                <button type="button" onClick={() => { setMode("upload"); setUploadError(""); setUploadSuccess(""); setSelectedDoc(null); }} style={tabStyle(mode === "upload")}>
+                  📎 Study with PDF Notes
+                </button>
                 <button type="button" onClick={() => setMode("mcq")} style={tabStyle(mode === "mcq")}>
-                  ⚡ Practice MCQ Quiz
+                  ⚡ General MCQ Quiz
                 </button>
                 <button type="button" onClick={() => setMode("theory")} style={tabStyle(mode === "theory")}>
-                  📚 Learn Theory First
-                </button>
-                <button type="button" onClick={() => setMode("upload")} style={tabStyle(mode === "upload")}>
-                  📎 Upload PDF Notes
+                  📚 General Concept Explainer
                 </button>
               </div>
 
               {/* ── Upload PDF Mode ─────────────────────────────────────────── */}
               {mode === "upload" && (
                 <div style={formStyle}>
-                  <h2 style={sectionTitleStyle}>📎 Upload PDF & Instantly Study It</h2>
+                  <h2 style={sectionTitleStyle}>📎 Study with PDF Notes</h2>
                   <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginTop: "-10px" }}>
-                    Upload your PDF notes. Then choose to generate a quiz, get a theory summary, or have the AI explain it.
+                    Upload notes or select a previously indexed document to study.
                   </p>
 
-                  {/* Subject selector */}
-                  <div style={formGroupStyle}>
-                    <label style={labelStyle}>Subject Category</label>
-                    <select value={uploadSubject} onChange={(e) => setUploadSubject(e.target.value)} style={selectStyle}>
-                      {["Computer Networks","Algorithms","Database Systems","System Design","Operating Systems","Machine Learning","Data Structures","Mathematics","Other"].map((s) => (
-                        <option key={s} value={s} style={{ background: "#1f2937", color: "#f3f4f6" }}>{s}</option>
-                      ))}
-                    </select>
-                  </div>
+                  {/* Selection / Upload layout */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    {/* Subject selector */}
+                    <div style={formGroupStyle}>
+                      <label style={labelStyle}>Subject Category</label>
+                      <select value={uploadSubject} onChange={(e) => setUploadSubject(e.target.value)} style={selectStyle}>
+                        {["Computer Networks","Algorithms","Database Systems","System Design","Operating Systems","Machine Learning","Data Structures","Mathematics","Other"].map((s) => (
+                          <option key={s} value={s} style={{ background: "#1f2937", color: "#f3f4f6" }}>{s}</option>
+                        ))}
+                      </select>
+                    </div>
 
-                  {/* Drop zone */}
-                  <div
-                    onDrop={handleUploadDrop}
-                    onDragOver={(e) => { e.preventDefault(); setUploadDragOver(true); }}
-                    onDragLeave={() => setUploadDragOver(false)}
-                    onClick={() => fileInputRef.current?.click()}
-                    style={{
-                      border: `2px dashed ${uploadDragOver ? "var(--accent)" : selectedFile ? "var(--success)" : "var(--border-glass)"}`,
-                      borderRadius: "12px",
-                      padding: "36px 24px",
-                      textAlign: "center",
-                      cursor: "pointer",
-                      background: uploadDragOver ? "rgba(99,102,241,0.06)" : selectedFile ? "rgba(16,185,129,0.04)" : "rgba(255,255,255,0.02)",
-                      transition: "all 0.2s ease",
-                    }}
-                  >
-                    <div style={{ fontSize: "40px", marginBottom: "10px" }}>{selectedFile ? "📄" : "📁"}</div>
-                    {selectedFile ? (
-                      <div>
-                        <p style={{ fontWeight: 600, color: "var(--success)", fontSize: "15px", margin: 0 }}>{selectedFile.name}</p>
-                        <p style={{ color: "var(--text-secondary)", fontSize: "12px", marginTop: "4px" }}>
-                          {(selectedFile.size / 1024).toFixed(1)} KB · Click to change
-                        </p>
-                      </div>
-                    ) : (
-                      <div>
-                        <p style={{ fontWeight: 600, fontSize: "15px", color: "var(--text-primary)", margin: 0 }}>Drop PDF here or click to browse</p>
-                        <p style={{ color: "var(--text-secondary)", fontSize: "12px", marginTop: "4px" }}>PDF files only · Max 20 MB</p>
+                    {/* Drop zone */}
+                    <div
+                      onDrop={handleUploadDrop}
+                      onDragOver={(e) => { e.preventDefault(); setUploadDragOver(true); }}
+                      onDragLeave={() => setUploadDragOver(false)}
+                      onClick={() => fileInputRef.current?.click()}
+                      style={{
+                        border: `2px dashed ${uploadDragOver ? "var(--accent)" : selectedFile ? "var(--success)" : "var(--border-glass)"}`,
+                        borderRadius: "12px",
+                        padding: "24px 16px",
+                        textAlign: "center",
+                        cursor: "pointer",
+                        background: uploadDragOver ? "rgba(99,102,241,0.06)" : selectedFile ? "rgba(16,185,129,0.04)" : "rgba(255,255,255,0.02)",
+                        transition: "all 0.2s ease",
+                      }}
+                    >
+                      <div style={{ fontSize: "32px", marginBottom: "8px" }}>{selectedFile ? "📄" : "📁"}</div>
+                      {selectedFile ? (
+                        <div>
+                          <p style={{ fontWeight: 600, color: "var(--success)", fontSize: "14px", margin: 0 }}>{selectedFile.name}</p>
+                          <p style={{ color: "var(--text-secondary)", fontSize: "11px", marginTop: "2px" }}>
+                            {(selectedFile.size / 1024).toFixed(1)} KB · Click to change
+                          </p>
+                        </div>
+                      ) : (
+                        <div>
+                          <p style={{ fontWeight: 600, fontSize: "14px", color: "var(--text-primary)", margin: 0 }}>Drop new PDF here or click to browse</p>
+                          <p style={{ color: "var(--text-secondary)", fontSize: "11px", marginTop: "2px" }}>PDF files only · Max 20 MB</p>
+                        </div>
+                      )}
+                      <input ref={fileInputRef} type="file" accept="application/pdf" style={{ display: "none" }}
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) { setSelectedFile(f); setSelectedDoc(null); setUploadError(""); setUploadSuccess(""); } }} />
+                    </div>
+
+                    {uploadError && <p style={{ color: "#EF4444", fontSize: "13px" }}>⚠ {uploadError}</p>}
+                    {uploadSuccess && (
+                      <div style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.3)", borderRadius: "8px", padding: "12px 16px", fontSize: "13px", color: "var(--success)" }}>
+                        {uploadSuccess}
                       </div>
                     )}
-                    <input ref={fileInputRef} type="file" accept="application/pdf" style={{ display: "none" }}
-                      onChange={(e) => { const f = e.target.files?.[0]; if (f) { setSelectedFile(f); setUploadError(""); } }} />
+
+                    {/* Upload button */}
+                    {selectedFile && (
+                      <button
+                        type="button"
+                        disabled={showProgress}
+                        onClick={handleUpload}
+                        style={{ ...btnPrimaryStyle, opacity: showProgress ? 0.6 : 1, cursor: showProgress ? "not-allowed" : "pointer", margin: 0 }}
+                      >
+                        {showProgress ? "Processing PDF..." : "📤 Upload & Index PDF"}
+                      </button>
+                    )}
                   </div>
 
-                  {uploadError && <p style={{ color: "#EF4444", fontSize: "13px" }}>⚠ {uploadError}</p>}
+                  {/* Actions after selection / upload */}
                   {uploadSuccess && (
-                    <div style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.3)", borderRadius: "8px", padding: "12px 16px", fontSize: "13px", color: "var(--success)" }}>
-                      {uploadSuccess}
-                    </div>
-                  )}
-
-                  {/* Upload button */}
-                  <button
-                    type="button"
-                    disabled={!selectedFile || showProgress}
-                    onClick={handleUpload}
-                    style={{ ...btnPrimaryStyle, opacity: !selectedFile || showProgress ? 0.6 : 1, cursor: !selectedFile || showProgress ? "not-allowed" : "pointer" }}
-                  >
-                    {showProgress ? "Processing..." : "📤 Upload & Index PDF"}
-                  </button>
-
-                  {/* Post-upload actions — show after successful upload */}
-                  {uploadSuccess && (
-                    <div>
-                      <p style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "10px", textTransform: "uppercase", letterSpacing: "0.5px" }}>What would you like to do with this document?</p>
-                      <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                        <button type="button" onClick={() => { setMode("mcq"); setSubject(uploadSubject); }}
-                          style={{ ...btnPrimaryStyle, flex: 1, margin: 0, fontSize: "13px", padding: "12px 16px" }}>
-                          ⚡ Generate MCQ Quiz (up to 50 Qs)
-                        </button>
-                        <button type="button" onClick={() => { setMode("theory"); setSubject(uploadSubject); }}
-                          style={{ ...btnPrimaryStyle, flex: 1, margin: 0, fontSize: "13px", padding: "12px 16px", background: "linear-gradient(135deg,#6366f1,#8b5cf6)" }}>
-                          📚 Theory Summary & Explanation
-                        </button>
+                    <div style={{ marginTop: "16px", padding: "20px", borderRadius: "12px", background: "rgba(99, 102, 241, 0.05)", border: "1px solid rgba(99, 102, 241, 0.15)" }} className="animate-fade-in">
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                        <p style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>🎯 Selected Subject: <span style={{ color: "var(--accent)" }}>{uploadSubject}</span></p>
+                        {selectedDoc && (
+                          <button
+                            type="button"
+                            onClick={() => { setSelectedDoc(null); setUploadSuccess(""); }}
+                            style={{ background: "none", border: "none", color: "#EF4444", fontSize: "11px", cursor: "pointer", fontWeight: 600 }}
+                          >
+                            Clear Selection
+                          </button>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                        <div style={{ display: "flex", gap: "10px" }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              startQuizOrTheory({
+                                mode: "mcq",
+                                subject: uploadSubject,
+                                topic: `${uploadSubject} notes`,
+                                numQuestions: 50,
+                              });
+                            }}
+                            style={{ ...btnPrimaryStyle, flex: 1, margin: 0, fontSize: "13px", padding: "12px 16px" }}
+                          >
+                            ⚡ Generate 50-Question MCQ Quiz
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              startQuizOrTheory({
+                                mode: "theory",
+                                subject: uploadSubject,
+                                topic: `Explain and summarize my uploaded ${uploadSubject} notes.`,
+                              });
+                            }}
+                            style={{ ...btnPrimaryStyle, flex: 1, margin: 0, fontSize: "13px", padding: "12px 16px", background: "linear-gradient(135deg,#6366f1,#8b5cf6)" }}
+                          >
+                            📚 Learn Theory First
+                          </button>
+                        </div>
+                        <div style={{ display: "flex", gap: "10px", alignItems: "center", borderTop: "1px solid rgba(255, 255, 255, 0.05)", paddingTop: "12px", marginTop: "4px" }}>
+                          <span style={{ fontSize: "12px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>Custom Quiz length:</span>
+                          <select 
+                            defaultValue={10} 
+                            onChange={(e) => {
+                              startQuizOrTheory({
+                                mode: "mcq",
+                                subject: uploadSubject,
+                                topic: `${uploadSubject} notes`,
+                                numQuestions: Number(e.target.value),
+                              });
+                            }}
+                            style={{ ...selectStyle, margin: 0, width: "auto", padding: "6px 12px", fontSize: "12px" }}
+                          >
+                            <option value={5} style={{ background: "#1f2937", color: "#f3f4f6" }}>5 Questions</option>
+                            <option value={10} style={{ background: "#1f2937", color: "#f3f4f6" }}>10 Questions</option>
+                            <option value={20} style={{ background: "#1f2937", color: "#f3f4f6" }}>20 Questions</option>
+                            <option value={50} style={{ background: "#1f2937", color: "#f3f4f6" }}>50 Questions</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              router.push(`/dashboard/chat?subject=${encodeURIComponent(uploadSubject)}`);
+                            }}
+                            style={{ ...btnSecondaryStyle, flex: 1, margin: 0, padding: "8px 12px", fontSize: "12px" }}
+                          >
+                            💬 Start Explainer Chat
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}
+
+                  {/* List of indexed notes */}
+                  <div style={{ marginTop: "24px", borderTop: "1px solid rgba(255, 255, 255, 0.06)", paddingTop: "20px" }}>
+                    <h3 style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "12px", textTransform: "uppercase", letterSpacing: "0.5px" }}>📁 Your Indexed Study Notes</h3>
+                    {documents.length > 0 ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "250px", overflowY: "auto", paddingRight: "4px" }}>
+                        {documents.map((doc) => {
+                          const isSelected = selectedDoc?.id === doc.id;
+                          return (
+                            <div
+                              key={doc.id}
+                              onClick={() => {
+                                setSelectedDoc(doc);
+                                setUploadSubject(doc.subject);
+                                setUploadSuccess(`✓ Selected document: "${doc.filename}"`);
+                              }}
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                padding: "10px 14px",
+                                borderRadius: "8px",
+                                background: isSelected ? "rgba(99, 102, 241, 0.1)" : "rgba(255, 255, 255, 0.01)",
+                                border: `1px solid ${isSelected ? "var(--accent)" : "rgba(255, 255, 255, 0.04)"}`,
+                                cursor: "pointer",
+                                transition: "all 0.15s ease",
+                              }}
+                            >
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                                <span style={{ fontSize: "16px", flexShrink: 0 }}>📄</span>
+                                <div style={{ display: "flex", flexDirection: "column", gap: "1px", minWidth: 0 }}>
+                                  <span style={{ fontSize: "13px", fontWeight: 500, color: isSelected ? "var(--accent)" : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.filename}</span>
+                                  <span style={{ fontSize: "10px", color: "var(--text-secondary)" }}>{(doc.file_size / 1024).toFixed(1)} KB · {doc.num_chunks} segments</span>
+                                </div>
+                              </div>
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                                <span style={{ fontSize: "10px", background: "rgba(99, 102, 241, 0.15)", color: "var(--accent)", padding: "2px 6px", borderRadius: "10px", fontWeight: 600 }}>{doc.subject}</span>
+                                {isSelected && <span style={{ color: "var(--accent)", fontWeight: "bold", fontSize: "12px" }}>✓</span>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: "12px", color: "var(--text-secondary)" }}>No notes indexed yet. Upload a PDF above to begin.</p>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -699,7 +915,12 @@ export default function QuizPage() {
                     <label style={labelStyle}>Topic or Concept</label>
                     <input type="text" value={topic} onChange={(e) => setTopic(e.target.value)}
                       placeholder={subject === "Computer Networks" ? "e.g. TCP Handshake, BGP routing, DNS..." : subject === "Algorithms" ? "e.g. Merge Sort, Dijkstra, DP..." : "e.g. SQL Joins, OSI Model, Process vs Thread..."}
-                      style={inputStyle} required />
+                      style={inputStyle} required={!getDocCountForSubject(subject)} />
+                    {getDocCountForSubject(subject) > 0 && (
+                      <p style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "6px" }}>
+                        You can leave this blank when generating from your uploaded notes for {subject}.
+                      </p>
+                    )}
                   </div>
 
                   {subject !== "All Subjects" && (
@@ -861,6 +1082,135 @@ export default function QuizPage() {
                 })}
               </div>
 
+              {/* AI Coach Report Section */}
+              <div style={{
+                marginTop: "32px",
+                padding: "24px",
+                borderRadius: "16px",
+                background: "rgba(99, 102, 241, 0.04)",
+                border: "1px solid rgba(99, 102, 241, 0.15)",
+                position: "relative",
+                overflow: "hidden"
+              }}>
+                {/* Radial Glow */}
+                <div style={{
+                  position: "absolute",
+                  top: "-50px",
+                  right: "-50px",
+                  width: "150px",
+                  height: "150px",
+                  borderRadius: "50%",
+                  background: "rgba(99, 102, 241, 0.15)",
+                  filter: "blur(40px)",
+                  pointerEvents: "none"
+                }} />
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "12px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <span style={{ fontSize: "24px" }}>🎓</span>
+                    <div>
+                      <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#fff", margin: 0 }}>Your AI Coach Report</h3>
+                      <p style={{ fontSize: "11px", color: "var(--text-secondary)", margin: 0 }}>Personalized diagnostic analysis & feedback</p>
+                    </div>
+                  </div>
+                  
+                  {coachReport && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(coachReport);
+                        alert("Coach Report copied to clipboard! 📋");
+                      }}
+                      style={{
+                        background: "rgba(255, 255, 255, 0.05)",
+                        border: "1px solid rgba(255, 255, 255, 0.1)",
+                        borderRadius: "8px",
+                        color: "var(--text-primary)",
+                        padding: "6px 12px",
+                        fontSize: "12px",
+                        cursor: "pointer",
+                        fontWeight: 500,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        transition: "all 0.2s"
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.1)"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
+                    >
+                      📋 Copy Report
+                    </button>
+                  )}
+                </div>
+
+                <style dangerouslySetInnerHTML={{__html: `
+                  @keyframes spin-loader {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                  }
+                `}} />
+
+                {coachLoading && (
+                  <div style={{ padding: "30px 0", textAlign: "center" }}>
+                    <div style={{
+                      display: "inline-block",
+                      width: "40px",
+                      height: "40px",
+                      borderRadius: "50%",
+                      border: "3px solid rgba(99, 102, 241, 0.1)",
+                      borderTopColor: "var(--accent)",
+                      animation: "spin-loader 1s linear infinite",
+                      marginBottom: "12px"
+                    }} />
+                    <p style={{ fontSize: "13px", color: "var(--text-secondary)", margin: 0 }}>
+                      AI Coach is analyzing your answers and compiling concept feedback...
+                    </p>
+                  </div>
+                )}
+
+                {!coachLoading && !coachReport && (
+                  <p style={{ fontSize: "13px", color: "var(--text-secondary)", textAlign: "center", margin: "20px 0" }}>
+                    No report available.
+                  </p>
+                )}
+
+                {!coachLoading && coachReport && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }} className="animate-fade-in">
+                    {!hasApiKey && (
+                      <div style={{
+                        background: "rgba(245, 158, 11, 0.08)",
+                        border: "1px solid rgba(245, 158, 11, 0.25)",
+                        borderRadius: "8px",
+                        padding: "12px 16px",
+                        fontSize: "12.5px",
+                        color: "#F59E0B",
+                        display: "flex",
+                        gap: "8px",
+                        alignItems: "center",
+                        marginBottom: "8px",
+                        lineHeight: "1.4"
+                      }}>
+                        <span>⚠️</span>
+                        <span>
+                          <strong>Demo Mode Active:</strong> Showing a simulated learning analysis. Set your <strong>Groq API Key</strong> in the sidebar settings menu for live personalized feedback.
+                        </span>
+                      </div>
+                    )}
+
+                    <div style={{
+                      lineHeight: "1.6",
+                      fontSize: "13.5px",
+                      color: "var(--text-secondary)"
+                    }}>
+                      <MarkdownRenderer
+                        text={coachReport}
+                        onSourceClick={() => {}}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <button onClick={handleReset} style={{ ...btnPrimaryStyle, marginTop: "28px" }}>
                 Practice Another Topic ⚡
               </button>
@@ -880,7 +1230,7 @@ export default function QuizPage() {
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <span style={{ fontSize: "11px", color: "var(--text-secondary)", display: "block" }}>Swarm model:</span>
-                  <span style={{ fontSize: "12px", color: "var(--accent)", fontWeight: 600 }}>{theoryResult.model || "gemini-1.5-flash"}</span>
+                  <span style={{ fontSize: "12px", color: "var(--accent)", fontWeight: 600 }}>{theoryResult.model || "llama-3.3-70b-versatile"}</span>
                 </div>
               </div>
 
@@ -1114,6 +1464,21 @@ const btnPrimaryStyle: React.CSSProperties = {
   cursor: "pointer",
   marginTop: "10px",
   boxShadow: "0 0 20px rgba(99,102,241,0.3)",
+};
+
+const btnSecondaryStyle: React.CSSProperties = {
+  background: "rgba(255, 255, 255, 0.05)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border-glass)",
+  borderRadius: "8px",
+  padding: "12px 14px",
+  fontSize: "13px",
+  fontWeight: 600,
+  cursor: "pointer",
+  boxShadow: "none",
+  display: "flex",
+  justifyContent: "center",
+  alignItems: "center",
 };
 
 const progressHeaderStyle: React.CSSProperties = {
@@ -1533,3 +1898,4 @@ const successResultStyle: React.CSSProperties = {
   borderRadius: "12px",
   padding: "14px 18px",
 };
+

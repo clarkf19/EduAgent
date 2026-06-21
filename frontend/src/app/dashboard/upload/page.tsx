@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
+import { useRouter } from "next/navigation";
 
 const SUBJECTS = [
   "Computer Networks",
@@ -68,12 +69,13 @@ function getCookie(name: string): string | null {
 
 async function apiFetch(path: string, opts: RequestInit = {}) {
   const token = getCookie("access_token") || (typeof window !== "undefined" ? localStorage.getItem("token") : null);
-  const apiKey = typeof window !== "undefined" ? localStorage.getItem("gemini_api_key") : null;
-  return fetch(`http://127.0.0.1:8000${path}`, {
+  const apiKey = typeof window !== "undefined" ? localStorage.getItem("groq_api_key") : null;
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+  return fetch(`${API_BASE}${path}`, {
     ...opts,
     headers: {
       Authorization: token ? `Bearer ${token}` : "",
-      ...(apiKey ? { "X-Gemini-API-Key": apiKey } : {}),
+      ...(apiKey ? { "X-Groq-Api-Key": apiKey } : {}),
       ...(opts.headers || {}),
     },
   });
@@ -183,6 +185,7 @@ function UploadProgressOverlay({
 
 // ── Main Page ────────────────────────────────────────────────────────────────
 export default function UploadPage() {
+  const router = useRouter();
   const [dragOver, setDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [subject, setSubject] = useState(SUBJECTS[0]);
@@ -461,8 +464,30 @@ export default function UploadPage() {
             </div>
           )}
           {uploadSuccess && !showProgress && (
-            <div style={alertStyle("rgba(16,185,129,0.12)", "rgba(16,185,129,0.4)")}>
-              {uploadSuccess}
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <div style={alertStyle("rgba(16,185,129,0.12)", "rgba(16,185,129,0.4)")}>
+                {uploadSuccess}
+              </div>
+              <div style={{ display: "flex", gap: "10px", marginTop: "4px" }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    router.push(`/dashboard/quiz?trigger=true&mode=mcq&subject=${encodeURIComponent(subject)}&numQuestions=50`);
+                  }}
+                  style={{ ...uploadBtnStyle, margin: 0, flex: 1, fontSize: "13px", padding: "10px 14px", background: "linear-gradient(135deg, var(--accent), #818CF8)" }}
+                >
+                  ⚡ Generate 50-Question MCQ Quiz
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    router.push(`/dashboard/quiz?trigger=true&mode=theory&subject=${encodeURIComponent(subject)}`);
+                  }}
+                  style={{ ...uploadBtnStyle, margin: 0, flex: 1, fontSize: "13px", padding: "10px 14px", background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}
+                >
+                  📚 Learn Theory First
+                </button>
+              </div>
             </div>
           )}
 
@@ -887,3 +912,4 @@ const successResultStyle: React.CSSProperties = {
   border: "1px solid rgba(16,185,129,0.3)",
   borderRadius: "12px",
 };
+

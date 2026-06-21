@@ -1,0 +1,12 @@
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+.env
+eduagent.db
+chroma_db
+chroma_db_backup
+db_data
+uploads
+*.pdf

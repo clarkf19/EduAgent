@@ -21,13 +21,14 @@ function getCookie(name: string): string | null {
 
 async function apiFetch(path: string, opts: RequestInit = {}) {
   const token = getCookie("access_token") || (typeof window !== "undefined" ? localStorage.getItem("token") : null);
-  const apiKey = typeof window !== "undefined" ? localStorage.getItem("gemini_api_key") : null;
-  return fetch(`http://127.0.0.1:8000${path}`, {
+  const apiKey = typeof window !== "undefined" ? localStorage.getItem("groq_api_key") : null;
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+  return fetch(`${API_BASE}${path}`, {
     ...opts,
     headers: {
       Authorization: token ? `Bearer ${token}` : "",
       "Content-Type": "application/json",
-      ...(apiKey ? { "X-Gemini-API-Key": apiKey } : {}),
+      ...(apiKey ? { "X-Groq-Api-Key": apiKey } : {}),
       ...(opts.headers || {}),
     },
   });
@@ -547,3 +548,4 @@ const spinnerStyle: React.CSSProperties = {
   borderRadius: "50%",
   animation: "spin 1s linear infinite",
 };
+

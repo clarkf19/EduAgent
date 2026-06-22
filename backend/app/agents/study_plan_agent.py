@@ -12,7 +12,7 @@ import logging
 from typing import Optional, List, Dict, Any
 from datetime import date
 
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 
 logger = logging.getLogger(__name__)
@@ -104,12 +104,12 @@ def run_study_plan(
 
 Please generate a comprehensive, formatted study plan now."""
 
-    # Call Gemini
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",
-        google_api_key=api_key,
+    # Call Groq (free tier: 14,400 req/day)
+    llm = ChatGroq(
+        model="llama-3.3-70b-versatile",
+        groq_api_key=api_key,
         temperature=0.5,
-        max_tokens=3000,
+        max_tokens=4096,
     )
 
     messages = [
@@ -126,5 +126,5 @@ Please generate a comprehensive, formatted study plan now."""
         "exam_date": exam_date,
         "days_until_exam": days_until_exam,
         "study_hours_per_day": study_hours_per_day,
-        "model": "gemini-1.5-flash",
+        "model": "llama-3.3-70b-versatile (Groq)",
     }

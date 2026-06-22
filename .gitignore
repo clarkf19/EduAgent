@@ -1,20 +1,69 @@
-# Python
+# Python files
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Virtual environment
+# Virtual Environments
 venv/
 .venv/
+env/
+ENV/
 backend/venv/
+backend/.venv/
 
-# Environment variables
+# Environment Variables & Secrets (CRITICAL)
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+backend/.env
+frontend/.env
+frontend/.env.local
 
-# Node
+# Databases & Vector DBs (CRITICAL)
+*.db
+*.sqlite
+*.sqlite3
+backend/*.db
+backend/eduagent.db
+chroma_db/
+chroma_db_backup/
+db_data/
+
+# Node.js
 node_modules/
+frontend/node_modules/
+.npm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# IDE
+# Next.js Build Output
+frontend/.next/
+frontend/out/
+.next/
+out/
+
+# IDE / Editor config
 .vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
 
-# Logs
-*.log
+# OS Files
+.DS_Store
+Thumbs.db
+
+# User Uploads & Data
+backend/uploads/
+uploads/
+sample.pdf
+scratch/

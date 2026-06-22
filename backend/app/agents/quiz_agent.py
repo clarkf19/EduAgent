@@ -15,14 +15,14 @@ import logging
 import re
 from typing import Optional, List
 
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..chroma_client import semantic_search
 
 logger = logging.getLogger(__name__)
 
-QUIZ_SYSTEM_PROMPT = """You are EduAgent's Quiz Master — an expert at creating educational assessments.
+QUIZ_SYSTEM_PROMPT = """You are EduAgent's Quiz Master — a world-class creator of academic STEM and technical assessments.
 
 Generate exactly the number of multiple-choice questions requested. Each question MUST follow this exact JSON format (return ONLY a JSON array, no extra text):
 
@@ -32,18 +32,21 @@ Generate exactly the number of multiple-choice questions requested. Each questio
     "question": "What is...?",
     "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
     "correct_answer": "A",
-    "explanation": "Brief explanation of why A is correct.",
+    "explanation": "Detailed step-by-step mathematical calculation, code tracing path, or logical deduction showing why A is correct.",
     "difficulty": "Beginner"
   }
 ]
 
-Rules:
-- Options MUST always start with A), B), C), D)
-- correct_answer MUST be just the letter: A, B, C, or D
-- Explanations should be 1-2 sentences, educational and clear
-- Questions should test understanding, not just memorization
-- For Advanced difficulty: include edge cases, complexity analysis, or design tradeoffs
-- Return ONLY the JSON array. No markdown, no extra text."""
+RULES FOR HIGH-QUALITY & APPLIED QUESTIONS:
+1. **At least 50% of the questions MUST be sum-solving, numeric computation, code execution tracing, or logical puzzle questions** where the student must compute a value, trace a loop/recursion, analyze a function, or calculate a metric (e.g. math calculations, probability, Big-O space/time complexity math, data structure capacity, electrical or networking sums, code output prediction). Avoid pure term definition questions.
+2. **Options** MUST start with A), B), C), D). Ensure all options are plausible, distinct, and relate directly to the question (no jokes, and avoid simple "all of the above" or "none of the above").
+3. **Correct Answer** MUST be a single letter: A, B, C, or D.
+4. **Detailed Explanation**: If the question involves a calculation or code trace, the explanation MUST write out the step-by-step calculations or line-by-line code execution path so that the student learns the exact reasoning.
+5. **Difficulty Guidelines**:
+   - **Beginner**: Straightforward calculations, basic formulas, or short code snippet traces (1-3 lines).
+   - **Intermediate**: Multi-step calculations, loops or nested loops traces, comparative analysis with multiple features.
+   - **Advanced**: Complex calculations (e.g., networking subnet math, advanced algorithmic complexity, probability), recursive code traces, edge cases, system design tradeoffs.
+6. **Output**: Return ONLY the raw JSON array. No markdown blocks, no leading/trailing explanation."""
 
 
 def run_quiz_generator(
@@ -71,6 +74,8 @@ def run_quiz_generator(
     if difficulty not in ["Beginner", "Intermediate", "Advanced"]:
         difficulty = "Intermediate"
 
+    topic = topic.strip() or "your uploaded study materials"
+
     # Step 1: Retrieve relevant context
     where_filter = {}
     if user_id is not None:
@@ -92,9 +97,9 @@ def run_quiz_generator(
 
     # Step 2: Build prompt
     difficulty_guidance = {
-        "Beginner": "Focus on definitions, basic concepts, and simple facts. Questions should be straightforward.",
-        "Intermediate": "Focus on application, comparison between concepts, and understanding of mechanisms.",
-        "Advanced": "Focus on edge cases, performance tradeoffs, design decisions, and deep understanding.",
+        "Beginner": "Simple and straightforward problem solving, basic calculations, or simple 1-3 line code execution tracing.",
+        "Intermediate": "Multi-step calculations, logic puzzles, loop analysis, function outputs, or comparative STEM problems.",
+        "Advanced": "High-complexity calculations (e.g., probability, networking formulas, advanced math sums), recursion tracing, edge cases, and performance tradeoffs.",
     }
 
     if context_text:
@@ -115,12 +120,12 @@ Difficulty guidance: {difficulty_guidance[difficulty]}
 
 Return ONLY the JSON array."""
 
-    # Step 3: Call Gemini
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",
-        google_api_key=api_key,
+    # Step 3: Call Groq (free tier: 14,400 req/day)
+    llm = ChatGroq(
+        model="llama-3.3-70b-versatile",
+        groq_api_key=api_key,
         temperature=0.4,
-        max_tokens=2048,
+        max_tokens=4096,
     )
 
     messages = [
@@ -140,7 +145,7 @@ Return ONLY the JSON array."""
         "difficulty": difficulty,
         "num_questions": len(questions),
         "used_knowledge_base": bool(context_text),
-        "model": "gemini-1.5-flash",
+        "model": "llama-3.3-70b-versatile (Groq)",
     }
 
 

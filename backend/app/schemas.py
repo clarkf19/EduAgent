@@ -181,3 +181,24 @@ class StudyGoalResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+# --- Coach Report Schemas ---
+class CoachReportQuestion(BaseModel):
+    id: int
+    question: str
+    options: List[str]
+    correct_answer: str
+    explanation: str
+    difficulty: str
+
+class CoachReportRequest(BaseModel):
+    questions: List[CoachReportQuestion]
+    answers: dict
+    score: float
+    subject: Optional[str] = None
+    topic: Optional[str] = None
+
+class CoachReportResponse(BaseModel):
+    report: str
+    model: str
+

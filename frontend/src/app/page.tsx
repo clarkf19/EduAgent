@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import React from "react";
 
@@ -11,7 +13,7 @@ export default function Home() {
         </div>
         <nav style={navStyle}>
           <Link href="/auth" style={navLinkStyle}>Sign In</Link>
-          <Link href="/auth" style={navBtnStyle}>Get Started</Link>
+          <Link href="/auth" className="glass-btn glass-btn-primary" style={{ padding: "8px 18px", fontSize: "14px", height: "auto" }}>Get Started</Link>
         </nav>
       </header>
 
@@ -27,10 +29,18 @@ export default function Home() {
           </p>
           <div style={ctaContainerStyle}>
             <Link href="/auth" style={primaryCtaStyle} className="glass-btn glass-btn-primary">
-              Initialize Assistant
+              Get Started for Free
             </Link>
-            <a href="#features" style={secondaryCtaStyle} className="glass-btn glass-btn-secondary">
-              Meet the Swarm
+            <a 
+              href="#features" 
+              onClick={(e) => {
+                e.preventDefault();
+                document.getElementById("features")?.scrollIntoView({ behavior: "smooth" });
+              }}
+              style={secondaryCtaStyle} 
+              className="glass-btn glass-btn-secondary"
+            >
+              Explore Features
             </a>
           </div>
         </section>
@@ -279,3 +289,4 @@ const footerTextStyle: React.CSSProperties = {
   color: "var(--text-muted)",
   fontSize: "13px",
 };
+

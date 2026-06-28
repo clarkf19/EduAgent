@@ -1222,14 +1222,14 @@ export default function QuizPage() {
               {/* Theory Header */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border-glass)", paddingBottom: "14px", marginBottom: "20px" }}>
                 <div>
-                  <span style={theoryBadgeStyle}>📚 THEORY Swarm ACTIVE</span>
+                  <span style={theoryBadgeStyle}>📚 THEORY AGENTS ACTIVE</span>
                   <h2 style={{ fontSize: "20px", fontWeight: 700, marginTop: "6px" }}>{topic}</h2>
                   <span style={{ fontSize: "12.5px", color: "var(--text-secondary)" }}>
                     Subject: <strong style={{ color: "#fff" }}>{subject}</strong>
                   </span>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <span style={{ fontSize: "11px", color: "var(--text-secondary)", display: "block" }}>Swarm model:</span>
+                  <span style={{ fontSize: "11px", color: "var(--text-secondary)", display: "block" }}>Agent model:</span>
                   <span style={{ fontSize: "12px", color: "var(--accent)", fontWeight: 600 }}>{theoryResult.model || "llama-3.3-70b-versatile"}</span>
                 </div>
               </div>

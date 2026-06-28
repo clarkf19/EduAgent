@@ -155,7 +155,7 @@ export default function Dashboard() {
       {/* Header */}
       <div>
         <h1 style={titleStyle}>Learning Analytics</h1>
-        <p style={subtitleStyle}>Real-time intelligence from your AI study swarm and performance model.</p>
+        <p style={subtitleStyle}>Real-time intelligence from your AI study agents and performance model.</p>
       </div>
 
       {/* ── Stats Row ──────────────────────────────────────────────────────── */}
@@ -335,7 +335,7 @@ export default function Dashboard() {
             {/* Step 3 */}
             <div style={onboardingCardStyle}>
               <div style={onboardingBadgeStyle}>3</div>
-              <h3 style={{ fontSize: "15px", fontWeight: 600, color: "#fff" }}>Deep Dive with AI Swarm</h3>
+              <h3 style={{ fontSize: "15px", fontWeight: 600, color: "#fff" }}>Deep Dive with AI Agents</h3>
               <p style={{ fontSize: "12.5px", color: "var(--text-secondary)", lineHeight: "1.5" }}>
                 Chat with the Explainer Agent. Click on highlighted citation citations to see the precise text chunks.
               </p>

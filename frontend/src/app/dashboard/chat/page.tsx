@@ -29,6 +29,33 @@ interface Message {
   timestamp: string;
 }
 
+interface ChatSession {
+  id: string;
+  title: string;
+  messages: Message[];
+  createdAt: number;
+  subject: string;
+}
+
+const STORAGE_KEY = "eduagent_chat_history";
+
+function loadHistory(): ChatSession[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(sessions: ChatSession[]) {
+  if (typeof window === "undefined") return;
+  // Keep max 30 sessions
+  const trimmed = sessions.slice(0, 30);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+}
+
 function getCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
   const match = document.cookie.match(new RegExp("(^| )" + name + "=([^;]+)"));
@@ -50,7 +77,26 @@ async function apiFetch(path: string, opts: RequestInit = {}) {
   });
 }
 
-// Simple Custom Markdown Parser to render beautiful styled text without needing external packages
+// Derive a short title from the first user message
+function deriveTitle(messages: Message[]): string {
+  const first = messages.find((m) => m.sender === "user");
+  if (!first) return "New Chat";
+  const words = first.text.trim().split(/\s+/).slice(0, 7).join(" ");
+  return words.length < first.text.trim().length ? words + "…" : words;
+}
+
+function formatRelativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
+// ── Markdown Renderer ────────────────────────────────────────────────────────
 function MarkdownRenderer({
   text,
   sources,
@@ -88,41 +134,34 @@ function MarkdownRenderer({
       continue;
     }
 
-    // Process normal line formatting (Headers, Lists, Bold)
-    let renderedLine: React.ReactNode = line;
-
-    // Headers
     if (line.startsWith("### ")) {
-      elements.push(<h3 key={i} style={h3Style}>{parseInlineFormatting(line.slice(4), sources, onSourceClick)}</h3>);
+      elements.push(<h3 key={i} style={h3Style}>{parseInline(line.slice(4), sources, onSourceClick)}</h3>);
       continue;
     } else if (line.startsWith("#### ")) {
-      elements.push(<h4 key={i} style={h4Style}>{parseInlineFormatting(line.slice(5), sources, onSourceClick)}</h4>);
+      elements.push(<h4 key={i} style={h4Style}>{parseInline(line.slice(5), sources, onSourceClick)}</h4>);
       continue;
     } else if (line.startsWith("## ")) {
-      elements.push(<h2 key={i} style={h2Style}>{parseInlineFormatting(line.slice(3), sources, onSourceClick)}</h2>);
+      elements.push(<h2 key={i} style={h2Style}>{parseInline(line.slice(3), sources, onSourceClick)}</h2>);
       continue;
     }
 
-    // Bullet Lists
     if (line.startsWith("- ") || line.startsWith("* ")) {
       elements.push(
         <ul key={i} style={ulStyle}>
-          <li style={liStyle}>{parseInlineFormatting(line.slice(2), sources, onSourceClick)}</li>
+          <li style={liStyle}>{parseInline(line.slice(2), sources, onSourceClick)}</li>
         </ul>
       );
       continue;
     }
 
-    // Empty space
     if (line.trim() === "") {
       elements.push(<div key={i} style={{ height: "8px" }} />);
       continue;
     }
 
-    // Default Paragraph line
     elements.push(
       <p key={i} style={pStyle}>
-        {parseInlineFormatting(line, sources, onSourceClick)}
+        {parseInline(line, sources, onSourceClick)}
       </p>
     );
   }
@@ -130,25 +169,21 @@ function MarkdownRenderer({
   return <div>{elements}</div>;
 }
 
-function parseInlineFormatting(
+function parseInline(
   text: string,
   sources?: any[],
   onSourceClick?: (idx: number) => void
 ): React.ReactNode[] {
-  // Simple bold parser **bold**
   const parts = text.split(/(\*\*.*?\*\*)/g);
   return parts.flatMap((part, idx) => {
     if (part.startsWith("**") && part.endsWith("**")) {
       return [<strong key={`bold-${idx}`} style={{ color: "#fff" }}>{part.slice(2, -2)}</strong>];
     }
-    // Inline code fallback `code`
     const codeParts = part.split(/(`.*?`)/g);
     return codeParts.flatMap((subPart, sIdx) => {
       if (subPart.startsWith("`") && subPart.endsWith("`")) {
         return [<code key={`code-${idx}-${sIdx}`} style={inlineCodeStyle}>{subPart.slice(1, -1)}</code>];
       }
-      
-      // Split by source citation pattern: [Source X: ...] or [Source X]
       const citationParts = subPart.split(/(\[Source \d+[^\]]*\])/g);
       return citationParts.map((citPart, cIdx) => {
         if (citPart.startsWith("[Source ") && citPart.endsWith("]")) {
@@ -173,7 +208,10 @@ function parseInlineFormatting(
   });
 }
 
+// ── Main Component ───────────────────────────────────────────────────────────
 export default function ChatPage() {
+  const [history, setHistory] = useState<ChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([
     {
       sender: "ai",
@@ -185,7 +223,13 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [activeSubject, setActiveSubject] = useState("All Subjects");
   const [selectedSource, setSelectedSource] = useState<any | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Load history on mount
+  useEffect(() => {
+    setHistory(loadHistory());
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -194,6 +238,70 @@ export default function ChatPage() {
   useEffect(() => {
     scrollToBottom();
   }, [messages, loading]);
+
+  // Persist current session whenever messages change (if we have more than the greeting)
+  useEffect(() => {
+    const userMessages = messages.filter((m) => m.sender === "user");
+    if (userMessages.length === 0) return; // nothing to save yet
+
+    setHistory((prev) => {
+      const title = deriveTitle(messages);
+      if (activeSessionId) {
+        // update existing
+        const updated = prev.map((s) =>
+          s.id === activeSessionId ? { ...s, title, messages, subject: activeSubject } : s
+        );
+        saveHistory(updated);
+        return updated;
+      } else {
+        // create new session
+        const newSession: ChatSession = {
+          id: Date.now().toString(),
+          title,
+          messages,
+          createdAt: Date.now(),
+          subject: activeSubject,
+        };
+        setActiveSessionId(newSession.id);
+        const updated = [newSession, ...prev];
+        saveHistory(updated);
+        return updated;
+      }
+    });
+  }, [messages]);
+
+  const startNewChat = () => {
+    setActiveSessionId(null);
+    setMessages([
+      {
+        sender: "ai",
+        text: "Hello! I am EduAgent's Expert Tutor. Ask me any question, or upload custom study notes in the **Upload** page, and I will base my explanations directly on your uploaded materials.",
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      },
+    ]);
+    setInput("");
+    setActiveSubject("All Subjects");
+    setHistoryOpen(false);
+  };
+
+  const loadSession = (session: ChatSession) => {
+    setActiveSessionId(session.id);
+    setMessages(session.messages);
+    setActiveSubject(session.subject || "All Subjects");
+    setHistoryOpen(false);
+  };
+
+  const deleteSession = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setHistory((prev) => {
+      const updated = prev.filter((s) => s.id !== id);
+      saveHistory(updated);
+      return updated;
+    });
+    if (activeSessionId === id) {
+      startNewChat();
+    }
+  };
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -219,9 +327,7 @@ export default function ChatPage() {
         }),
       });
 
-      if (!res.ok) {
-        throw new Error("API error");
-      }
+      if (!res.ok) throw new Error("API error");
 
       const data = await res.json();
       setMessages((prev) => [
@@ -239,7 +345,7 @@ export default function ChatPage() {
         ...prev,
         {
           sender: "ai",
-          text: "⚠ **Error**: Could not reach the tutoring agent swarm. Make sure the backend server is running.",
+          text: "⚠ **Error**: Could not reach the tutoring agents. Make sure the backend server is running.",
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         },
       ]);
@@ -249,16 +355,25 @@ export default function ChatPage() {
   };
 
   return (
-    <div style={containerStyle} className="animate-fade-in">
-      {/* Header */}
-      <div>
-        <h1 style={titleStyle}>AI Tutor Space</h1>
-        <p style={subtitleStyle}>
-          Resolve doubts, review core principles, and query your vector knowledge base.
-        </p>
+    <>
+      <div style={containerStyle} className="animate-fade-in">
+        {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <h1 style={titleStyle}>AI Tutor Space</h1>
+          <p style={subtitleStyle}>Resolve doubts, review core principles, and query your knowledge base.</p>
+        </div>
+        <div style={{ display: "flex", gap: "10px" }}>
+          <button onClick={() => setHistoryOpen(!historyOpen)} style={historyToggleBtnStyle} title="Chat History">
+            🕐 History {history.length > 0 && <span style={historyCountBadge}>{history.length}</span>}
+          </button>
+          <button onClick={startNewChat} style={newChatBtnStyle} title="Start new chat">
+            ✏️ New Chat
+          </button>
+        </div>
       </div>
 
-      {/* Subject Pills Selection */}
+      {/* Subject Pills */}
       <div style={pillContainerStyle}>
         {SUBJECTS.map((sub) => (
           <button
@@ -279,7 +394,7 @@ export default function ChatPage() {
 
       {/* Workspace Grid */}
       <div style={gridStyle}>
-        {/* Chat box */}
+        {/* Chat Panel */}
         <div className="glass-panel" style={chatPanelStyle}>
           <div style={messagesBoxStyle}>
             {messages.map((msg, index) => (
@@ -290,10 +405,7 @@ export default function ChatPage() {
                   justifyContent: msg.sender === "user" ? "flex-end" : "flex-start",
                 }}
               >
-                {/* Tutor Avatar */}
-                {msg.sender === "ai" && (
-                  <div style={avatarStyle}>👨‍🏫</div>
-                )}
+                {msg.sender === "ai" && <div style={avatarStyle}>👨‍🏫</div>}
 
                 <div
                   style={{
@@ -307,9 +419,7 @@ export default function ChatPage() {
                         ? "1px solid rgba(99, 102, 241, 0.35)"
                         : "1px solid rgba(255,255,255,0.06)",
                     borderRadius:
-                      msg.sender === "user"
-                        ? "16px 16px 4px 16px"
-                        : "16px 16px 16px 4px",
+                      msg.sender === "user" ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
                   }}
                 >
                   <MarkdownRenderer
@@ -322,42 +432,18 @@ export default function ChatPage() {
                     }}
                   />
 
-                  {/* Sources display */}
-                  {msg.sources && msg.sources.length > 0 && (
-                    <div style={sourcesContainerStyle}>
-                      <p style={sourcesTitleStyle}>📚 Referenced Knowledge Chunks:</p>
-                      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                        {msg.sources.map((src, sIdx) => (
-                          <div
-                            key={sIdx}
-                            style={{ ...sourceItemStyle, cursor: "pointer" }}
-                            onClick={() => setSelectedSource(src)}
-                            title="Click to view full content"
-                          >
-                            <span style={sourceBadgeStyle}>{src.subject || "Reference"}</span>
-                            <span style={sourceDocStyle}>{src.filename} (Page {src.page})</span>
-                            <div style={sourcePreviewStyle}>{src.preview}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Message Meta Info */}
+                  {/* Message Meta */}
                   <div style={metaContainerStyle}>
                     {msg.model && <span style={modelBadgeStyle}>{msg.model}</span>}
                     <span>{msg.timestamp}</span>
                   </div>
                 </div>
 
-                {/* User Avatar */}
-                {msg.sender === "user" && (
-                  <div style={avatarStyle}>🎓</div>
-                )}
+                {msg.sender === "user" && <div style={avatarStyle}>🎓</div>}
               </div>
             ))}
 
-            {/* Thinking / Typing indicator */}
+            {/* Typing indicator */}
             {loading && (
               <div style={messageWrapperStyle}>
                 <div style={avatarStyle}>👨‍🏫</div>
@@ -374,7 +460,7 @@ export default function ChatPage() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Form input */}
+          {/* Input form */}
           <form onSubmit={handleSend} style={formStyle}>
             <input
               type="text"
@@ -382,7 +468,7 @@ export default function ChatPage() {
               onChange={(e) => setInput(e.target.value)}
               placeholder={
                 activeSubject === "All Subjects"
-                  ? "Ask about any concept (e.g. 'What is packet routing?')..."
+                  ? "Ask about any concept (e.g. 'Explain merge sort')..."
                   : `Ask about ${activeSubject}...`
               }
               style={inputStyle}
@@ -402,46 +488,103 @@ export default function ChatPage() {
           </form>
         </div>
 
-        {/* Sidebar Info Panels */}
+        {/* Sidebar */}
         <div style={sidebarStyle}>
+          {/* Agent Status */}
           <div className="glass-panel" style={{ padding: "20px" }}>
-            <h3 style={panelHeadingStyle}>🦾 Active Swarm Node</h3>
+            <h3 style={panelHeadingStyle}>🦾 Active Agent Node</h3>
             <p style={panelBodyStyle}>
-              Your request is routed directly to the **Concept Tutor Agent**, which queries ChromaDB vector store page-by-page.
+              Your request is routed directly to the <strong style={{ color: "#a5b4fc" }}>Concept Tutor Agent</strong>, which queries the ChromaDB vector store.
             </p>
             <div style={agentStatusStyle}>
               <span style={indicatorStyle} />
-              <span style={{ fontSize: "12px", color: "var(--success)" }}>Tutor Swarm Connected</span>
+              <span style={{ fontSize: "12px", color: "var(--success)" }}>Tutor Agents Connected</span>
             </div>
           </div>
 
+          {/* Helpful Prompts */}
           <div className="glass-panel" style={{ padding: "20px" }}>
             <h3 style={panelHeadingStyle}>💡 Helpful Prompts</h3>
             <div style={promptsListStyle}>
-              <button
-                onClick={() => setInput("Explain TCP congestion control using a water pipe analogy.")}
-                style={promptBtnStyle}
-              >
+              <button onClick={() => setInput("Explain TCP congestion control using a water pipe analogy.")} style={promptBtnStyle}>
                 Explain TCP congestion control
               </button>
-              <button
-                onClick={() => setInput("What is the time complexity of QuickSort vs MergeSort in worst case?")}
-                style={promptBtnStyle}
-              >
+              <button onClick={() => setInput("What is the time complexity of QuickSort vs MergeSort in worst case?")} style={promptBtnStyle}>
                 QuickSort vs MergeSort complexity
               </button>
-              <button
-                onClick={() => setInput("Explain dynamic programming in 3 simple rules.")}
-                style={promptBtnStyle}
-              >
+              <button onClick={() => setInput("Explain dynamic programming in 3 simple rules.")} style={promptBtnStyle}>
                 Dynamic programming rules
               </button>
             </div>
           </div>
         </div>
       </div>
+      </div>
 
-      {/* Slide-out Source Drawer */}
+      {/* ── Chat History Drawer ── */}
+      {historyOpen && (
+        <>
+          {/* Backdrop */}
+          <div style={historyBackdropStyle} onClick={() => setHistoryOpen(false)} />
+          {/* Drawer */}
+          <div style={historyDrawerStyle}>
+            <div style={historyDrawerHeaderStyle}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <span style={{ fontSize: "18px" }}>🕐</span>
+                <span style={{ fontSize: "15px", fontWeight: 700, color: "#fff" }}>Chat History</span>
+              </div>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <button onClick={startNewChat} style={newChatSmallBtnStyle}>+ New Chat</button>
+                <button onClick={() => setHistoryOpen(false)} style={drawerCloseBtnStyle}>✕</button>
+              </div>
+            </div>
+
+            <div style={historyListStyle}>
+              {history.length === 0 ? (
+                <div style={emptyHistoryStyle}>
+                  <span style={{ fontSize: "32px" }}>💬</span>
+                  <p style={{ margin: "10px 0 4px", color: "#fff", fontWeight: 600, fontSize: "14px" }}>No past chats yet</p>
+                  <p style={{ margin: 0, color: "var(--text-muted)", fontSize: "12px" }}>Your conversations will appear here automatically.</p>
+                </div>
+              ) : (
+                history.map((session) => (
+                  <div
+                    key={session.id}
+                    onClick={() => loadSession(session)}
+                    style={{
+                      ...historyItemStyle,
+                      background: activeSessionId === session.id
+                        ? "rgba(99,102,241,0.12)"
+                        : "rgba(255,255,255,0.025)",
+                      borderColor: activeSessionId === session.id
+                        ? "rgba(99,102,241,0.4)"
+                        : "rgba(255,255,255,0.05)",
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={historyItemTitleStyle}>{session.title}</div>
+                      <div style={historyItemMetaStyle}>
+                        <span style={historySubjectBadgeStyle}>{session.subject || "All Subjects"}</span>
+                        <span>{formatRelativeTime(session.createdAt)}</span>
+                        <span>{session.messages.filter((m) => m.sender === "user").length} msg{session.messages.filter((m) => m.sender === "user").length !== 1 ? "s" : ""}</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={(e) => deleteSession(session.id, e)}
+                      style={deleteSessionBtnStyle}
+                      title="Delete this chat"
+                    >
+                      🗑
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Source Detail Drawer */}
       {selectedSource && (
         <div style={drawerOverlayStyle} onClick={() => setSelectedSource(null)}>
           <div style={drawerContentStyle} onClick={(e) => e.stopPropagation()}>
@@ -471,11 +614,11 @@ export default function ChatPage() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
-// ── Markdown styles ────────────────────────────────────────────────────────
+// ── Markdown styles ──────────────────────────────────────────────────────────
 const h2Style: React.CSSProperties = { fontSize: "18px", fontWeight: 700, margin: "14px 0 8px 0", color: "#fff" };
 const h3Style: React.CSSProperties = { fontSize: "16px", fontWeight: 600, margin: "12px 0 6px 0", color: "#f8fafc" };
 const h4Style: React.CSSProperties = { fontSize: "14px", fontWeight: 600, margin: "8px 0 4px 0", color: "#f1f5f9" };
@@ -503,33 +646,24 @@ const inlineCodeStyle: React.CSSProperties = {
   color: "#A7F3D0",
 };
 
-// ── Layout styles ──────────────────────────────────────────────────────────
+// ── Layout ───────────────────────────────────────────────────────────────────
 const containerStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  gap: "24px",
+  gap: "20px",
   maxWidth: "1100px",
   margin: "0 auto",
   height: "calc(100vh - 120px)",
 };
 
-const titleStyle: React.CSSProperties = {
-  fontSize: "26px",
-  fontWeight: 700,
-};
-
-const subtitleStyle: React.CSSProperties = {
-  fontSize: "14px",
-  color: "var(--text-secondary)",
-  marginTop: "4px",
-};
+const titleStyle: React.CSSProperties = { fontSize: "26px", fontWeight: 700 };
+const subtitleStyle: React.CSSProperties = { fontSize: "14px", color: "var(--text-secondary)", marginTop: "4px" };
 
 const pillContainerStyle: React.CSSProperties = {
   display: "flex",
   gap: "8px",
   overflowX: "auto",
   paddingBottom: "6px",
-  scrollBehavior: "smooth",
 };
 
 const pillStyle: React.CSSProperties = {
@@ -614,49 +748,6 @@ const modelBadgeStyle: React.CSSProperties = {
   fontSize: "10px",
 };
 
-const sourcesContainerStyle: React.CSSProperties = {
-  marginTop: "14px",
-  borderTop: "1px solid rgba(255,255,255,0.06)",
-  paddingTop: "12px",
-};
-
-const sourcesTitleStyle: React.CSSProperties = {
-  fontSize: "12.5px",
-  fontWeight: 600,
-  color: "#34D399",
-  marginBottom: "8px",
-};
-
-const sourceItemStyle: React.CSSProperties = {
-  background: "rgba(255,255,255,0.02)",
-  border: "1px solid rgba(255,255,255,0.04)",
-  borderRadius: "6px",
-  padding: "8px 12px",
-};
-
-const sourceBadgeStyle: React.CSSProperties = {
-  fontSize: "10px",
-  background: "rgba(99,102,241,0.15)",
-  color: "var(--accent)",
-  border: "1px solid rgba(99,102,241,0.25)",
-  borderRadius: "10px",
-  padding: "1px 6px",
-  marginRight: "8px",
-};
-
-const sourceDocStyle: React.CSSProperties = {
-  fontSize: "12px",
-  fontWeight: 500,
-  color: "var(--text-primary)",
-};
-
-const sourcePreviewStyle: React.CSSProperties = {
-  fontSize: "11.5px",
-  color: "var(--text-secondary)",
-  marginTop: "4px",
-  fontStyle: "italic",
-};
-
 const formStyle: React.CSSProperties = {
   display: "flex",
   borderTop: "1px solid var(--border-glass)",
@@ -693,6 +784,7 @@ const sidebarStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
   gap: "16px",
+  overflowY: "auto",
 };
 
 const panelHeadingStyle: React.CSSProperties = {
@@ -765,12 +857,168 @@ const citationBadgeStyle: React.CSSProperties = {
   transition: "all 0.15s ease",
 };
 
-const drawerOverlayStyle: React.CSSProperties = {
+// ── Header buttons ───────────────────────────────────────────────────────────
+const historyToggleBtnStyle: React.CSSProperties = {
+  background: "rgba(255,255,255,0.04)",
+  border: "1px solid rgba(255,255,255,0.08)",
+  borderRadius: "8px",
+  color: "var(--text-secondary)",
+  padding: "8px 14px",
+  fontSize: "13px",
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  gap: "6px",
+  transition: "all 0.2s ease",
+};
+
+const historyCountBadge: React.CSSProperties = {
+  background: "var(--accent)",
+  color: "#fff",
+  borderRadius: "10px",
+  padding: "1px 6px",
+  fontSize: "10px",
+  fontWeight: 700,
+};
+
+const newChatBtnStyle: React.CSSProperties = {
+  background: "linear-gradient(135deg, var(--accent), #818CF8)",
+  border: "none",
+  borderRadius: "8px",
+  color: "#fff",
+  padding: "8px 14px",
+  fontSize: "13px",
+  fontWeight: 600,
+  cursor: "pointer",
+  boxShadow: "0 0 12px rgba(99,102,241,0.25)",
+};
+
+// ── History Drawer ───────────────────────────────────────────────────────────
+const historyBackdropStyle: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  backgroundColor: "rgba(0,0,0,0.35)",
+  backdropFilter: "blur(3px)",
+  zIndex: 999,
+};
+
+const historyDrawerStyle: React.CSSProperties = {
   position: "fixed",
   top: 0,
-  left: 0,
   right: 0,
-  bottom: 0,
+  width: "360px",
+  height: "100vh",
+  background: "rgba(13, 17, 23, 0.97)",
+  backdropFilter: "blur(24px)",
+  borderLeft: "1px solid rgba(255,255,255,0.07)",
+  boxShadow: "-12px 0 40px rgba(0,0,0,0.5)",
+  zIndex: 1000,
+  display: "flex",
+  flexDirection: "column",
+};
+
+const historyDrawerHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  padding: "20px 20px 16px",
+  borderBottom: "1px solid rgba(255,255,255,0.06)",
+};
+
+const historyListStyle: React.CSSProperties = {
+  flex: 1,
+  overflowY: "auto",
+  padding: "12px",
+  display: "flex",
+  flexDirection: "column",
+  gap: "8px",
+};
+
+const historyItemStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "12px",
+  padding: "12px 14px",
+  borderRadius: "10px",
+  border: "1px solid",
+  cursor: "pointer",
+  transition: "all 0.15s ease",
+};
+
+const historyItemTitleStyle: React.CSSProperties = {
+  fontSize: "13px",
+  fontWeight: 600,
+  color: "#e2e8f0",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  marginBottom: "5px",
+};
+
+const historyItemMetaStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  fontSize: "11px",
+  color: "var(--text-muted)",
+};
+
+const historySubjectBadgeStyle: React.CSSProperties = {
+  background: "rgba(99,102,241,0.15)",
+  color: "#a5b4fc",
+  border: "1px solid rgba(99,102,241,0.2)",
+  borderRadius: "8px",
+  padding: "1px 6px",
+  fontSize: "10px",
+  fontWeight: 600,
+};
+
+const deleteSessionBtnStyle: React.CSSProperties = {
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  fontSize: "14px",
+  opacity: 0.4,
+  padding: "4px",
+  borderRadius: "4px",
+  transition: "opacity 0.15s ease",
+  flexShrink: 0,
+};
+
+const emptyHistoryStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "60px 20px",
+  textAlign: "center",
+};
+
+const newChatSmallBtnStyle: React.CSSProperties = {
+  background: "rgba(99,102,241,0.15)",
+  border: "1px solid rgba(99,102,241,0.25)",
+  borderRadius: "6px",
+  color: "#a5b4fc",
+  padding: "5px 10px",
+  fontSize: "12px",
+  fontWeight: 600,
+  cursor: "pointer",
+};
+
+// ── Source drawer ────────────────────────────────────────────────────────────
+const sourceBadgeStyle: React.CSSProperties = {
+  fontSize: "10px",
+  background: "rgba(99,102,241,0.15)",
+  color: "var(--accent)",
+  border: "1px solid rgba(99,102,241,0.25)",
+  borderRadius: "10px",
+  padding: "1px 6px",
+  marginRight: "8px",
+};
+
+const drawerOverlayStyle: React.CSSProperties = {
+  position: "fixed",
+  top: 0, left: 0, right: 0, bottom: 0,
   backgroundColor: "rgba(0, 0, 0, 0.4)",
   backdropFilter: "blur(4px)",
   zIndex: 1000,
@@ -801,49 +1049,43 @@ const drawerHeaderStyle: React.CSSProperties = {
 
 const drawerTitleStyle: React.CSSProperties = {
   fontSize: "16px",
-  fontWeight: 600,
+  fontWeight: 700,
   color: "#fff",
-};
-
-const drawerCloseBtnStyle: React.CSSProperties = {
-  background: "none",
-  border: "none",
-  color: "var(--text-secondary)",
-  fontSize: "18px",
-  cursor: "pointer",
-  padding: "4px 8px",
-  borderRadius: "4px",
-  transition: "background 0.2s",
 };
 
 const drawerBodyStyle: React.CSSProperties = {
   flex: 1,
   overflowY: "auto",
-  display: "flex",
-  flexDirection: "column",
 };
 
 const drawerMetaRowStyle: React.CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "8px",
-  background: "rgba(255, 255, 255, 0.02)",
-  padding: "16px",
+  background: "rgba(255,255,255,0.02)",
+  border: "1px solid rgba(255,255,255,0.05)",
   borderRadius: "8px",
-  border: "1px solid rgba(255, 255, 255, 0.04)",
+  padding: "14px",
 };
 
 const drawerChunkTextStyle: React.CSSProperties = {
-  background: "rgba(0, 0, 0, 0.2)",
-  border: "1px solid rgba(255, 255, 255, 0.05)",
+  background: "rgba(0,0,0,0.2)",
+  border: "1px solid rgba(255,255,255,0.05)",
   borderRadius: "8px",
   padding: "16px",
-  fontSize: "14px",
-  lineHeight: "1.6",
-  color: "rgba(255, 255, 255, 0.85)",
+  fontSize: "13.5px",
+  lineHeight: 1.7,
+  color: "rgba(255,255,255,0.75)",
   whiteSpace: "pre-wrap",
-  fontFamily: "monospace",
-  overflowY: "auto",
-  flex: 1,
 };
 
+const drawerCloseBtnStyle: React.CSSProperties = {
+  background: "rgba(255,255,255,0.06)",
+  border: "1px solid rgba(255,255,255,0.08)",
+  borderRadius: "6px",
+  color: "var(--text-secondary)",
+  cursor: "pointer",
+  width: "30px",
+  height: "30px",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  fontSize: "13px",
+};

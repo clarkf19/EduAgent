@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import React, { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 // Hook to check screen width dynamically
@@ -18,116 +18,163 @@ function useWindowWidth() {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
+type AuthView = "login" | "register" | "forgot" | "reset";
+
 export default function AuthPage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: "100vh", backgroundColor: "var(--bg-primary)" }} />}>
+      <AuthPageInner />
+    </Suspense>
+  );
+}
+
+function AuthPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const windowWidth = useWindowWidth();
   const isMobile = windowWidth > 0 && windowWidth < 900;
 
-  const [isLogin, setIsLogin] = useState(true);
+  const [view, setView] = useState<AuthView>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Registration extra fields
+  const [name, setName] = useState("");
+  const [age, setAge] = useState("");
+  const [role, setRole] = useState("");
+
+  // Reset password
+  const [resetToken, setResetToken] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+
+  // Check if URL has a reset token
+  useEffect(() => {
+    const token = searchParams?.get("token");
+    if (token) {
+      setResetToken(token);
+      setView("reset");
+    }
+  }, [searchParams]);
 
   const handleQuickFill = () => {
     setEmail("verify@test.com");
     setPassword("Test1234!");
     setError("");
+    setView("login");
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setSuccessMsg("");
     setLoading(true);
 
     try {
-      if (isLogin) {
-        // Login API Call
+      if (view === "login") {
         const formData = new URLSearchParams();
         formData.append("username", email);
         formData.append("password", password);
 
         const response = await fetch(`${API_BASE}/api/auth/login`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: formData.toString(),
         });
 
         const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Authentication failed");
 
-        if (!response.ok) {
-          throw new Error(data.detail || "Authentication failed");
-        }
-
-        // Store token in localStorage
         localStorage.setItem("token", data.access_token);
-        
-        // Setup simple cookie for middleware/session checks
         document.cookie = `token=${data.access_token}; path=/; max-age=7200; SameSite=Lax`;
-
-        // Redirect to dashboard
         router.push("/dashboard");
-      } else {
-        // Register API Call
+
+      } else if (view === "register") {
+        if (!name.trim()) { setError("Please enter your full name."); setLoading(false); return; }
+        if (!role) { setError("Please select your student type."); setLoading(false); return; }
+
         const response = await fetch(`${API_BASE}/api/auth/register`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ email, password }),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email,
+            password,
+            name: name.trim(),
+            age: age ? parseInt(age) : null,
+            role,
+          }),
         });
 
         const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Registration failed");
 
-        if (!response.ok) {
-          throw new Error(data.detail || "Registration failed");
-        }
-
-        // After successful registration, auto-login
+        // Auto-login after register
         const loginFormData = new URLSearchParams();
         loginFormData.append("username", email);
         loginFormData.append("password", password);
 
         const loginResponse = await fetch(`${API_BASE}/api/auth/login`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: loginFormData.toString(),
         });
 
         const loginData = await loginResponse.json();
-
-        if (!loginResponse.ok) {
-          setIsLogin(true);
-          setLoading(false);
-          return;
-        }
+        if (!loginResponse.ok) { setView("login"); setLoading(false); return; }
 
         localStorage.setItem("token", loginData.access_token);
         document.cookie = `token=${loginData.access_token}; path=/; max-age=7200; SameSite=Lax`;
         router.push("/dashboard");
+
+      } else if (view === "forgot") {
+        const response = await fetch(`${API_BASE}/api/auth/forgot-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        await response.json();
+        setSuccessMsg("If that email is registered, a password reset link has been sent to your inbox. Please check your email (including spam/junk folder).");
+        setEmail("");
+
+      } else if (view === "reset") {
+        const response = await fetch(`${API_BASE}/api/auth/reset-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: resetToken, new_password: newPassword }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Reset failed");
+        setSuccessMsg("Password updated! You can now sign in.");
+        setTimeout(() => { setView("login"); setSuccessMsg(""); }, 3000);
       }
     } catch (err: any) {
-      setError(err.message || "An unexpected error occurred. Please try again.");
+      setError(err.message || "An unexpected error occurred.");
     } finally {
       setLoading(false);
     }
   };
 
+  const switchView = (v: AuthView) => {
+    setView(v);
+    setError("");
+    setSuccessMsg("");
+    setEmail("");
+    setPassword("");
+  };
+
   return (
     <div style={containerStyle}>
-      {/* LEFT SIDE: Features Showcase Hero (Hidden on Mobile) */}
+      {/* LEFT SIDE: Features Showcase */}
       {!isMobile && (
         <div style={leftHeroStyle}>
-          {/* Subtle Grid and Glow backgrounds */}
           <div style={gridPatternStyle} />
           <div style={radialGlowStyle} />
 
           <div style={heroContentStyle}>
-            {/* Top Logo */}
             <div style={heroLogoWrapperStyle}>
               <Link href="/" style={logoStyle}>
                 <span style={logoDotStyle}></span> EduAgent
@@ -136,14 +183,14 @@ export default function AuthPage() {
 
             <div style={heroTextWrapperStyle}>
               <h1 style={heroTitleStyle}>
-                Empower Your Study Workflow with <span style={highlightTextStyle}>AI Swarms</span>
+                Empower Your Study Workflow with <span style={highlightTextStyle}>AI Agents</span>
               </h1>
               <p style={heroSubtitleStyle}>
                 EduAgent coordinates specialized artificial intelligence agents to analyze notes, generate targeted computations, and guide your academic progress.
               </p>
             </div>
 
-            {/* Feature Cards Grid */}
+            {/* Feature Cards */}
             <div style={featureCardsContainerStyle}>
               <div style={featureCardStyle}>
                 <span style={featureIconStyle}>🤖</span>
@@ -165,12 +212,11 @@ export default function AuthPage() {
                 <span style={featureIconStyle}>📁</span>
                 <div>
                   <h4 style={featureTitleStyle}>Direct PDF RAG Workspace</h4>
-                  <p style={featureDescStyle}>Upload course slides and papers to ground the AI swarm directly in your notes.</p>
+                  <p style={featureDescStyle}>Upload course slides and papers to ground the AI agents directly in your notes.</p>
                 </div>
               </div>
             </div>
 
-            {/* Mini visual element mimicking dashboard stats */}
             <div style={dashboardTeaserStyle} className="glass-panel">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: "11px", color: "var(--text-muted)", textTransform: "uppercase", fontWeight: 600 }}>TELEMETRY STATUS</span>
@@ -178,12 +224,16 @@ export default function AuthPage() {
               </div>
               <div style={{ display: "flex", gap: "24px", marginTop: "12px" }}>
                 <div>
-                  <p style={{ fontSize: "20px", fontWeight: 700, color: "#fff", margin: 0 }}>88.4%</p>
-                  <p style={{ fontSize: "11px", color: "var(--text-secondary)", margin: 0 }}>Expected Score</p>
+                  <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>AGENTS</div>
+                  <div style={{ fontSize: "18px", fontWeight: 700, color: "#fff" }}>3</div>
                 </div>
-                <div style={{ borderLeft: "1px solid var(--border-glass)", paddingLeft: "16px" }}>
-                  <p style={{ fontSize: "20px", fontWeight: 700, color: "var(--accent)", margin: 0 }}>4.5 hrs</p>
-                  <p style={{ fontSize: "11px", color: "var(--text-secondary)", margin: 0 }}>Weekly Study</p>
+                <div>
+                  <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>ML MODEL</div>
+                  <div style={{ fontSize: "18px", fontWeight: 700, color: "#fff" }}>RF</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>UPTIME</div>
+                  <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--success)" }}>99.9%</div>
                 </div>
               </div>
             </div>
@@ -191,12 +241,10 @@ export default function AuthPage() {
         </div>
       )}
 
-      {/* RIGHT SIDE: Authentication Form */}
+      {/* RIGHT SIDE: Auth Forms */}
       <div style={rightFormStyle(isMobile)}>
-        {/* Background glow for mobile */}
         {isMobile && <div style={glowRightStyle}></div>}
 
-        {/* Small top logo for mobile only */}
         {isMobile && (
           <div style={mobileLogoWrapperStyle}>
             <Link href="/" style={logoStyle}>
@@ -206,87 +254,290 @@ export default function AuthPage() {
         )}
 
         <div style={cardWrapperStyle} className="glass-panel animate-slide-up">
-          <h2 style={formTitleStyle}>{isLogin ? "Welcome Back" : "Create Account"}</h2>
-          <p style={formSubtitleStyle}>
-            {isLogin
-              ? "Access your dashboard to interact with your agents"
-              : "Register to initialize your personalized workspace"}
-          </p>
 
-          {/* DEMO ACCOUNT PRE-FILL BADGE */}
-          <div 
-            onClick={handleQuickFill}
-            style={demoBadgeStyle}
-            title="Click to instantly auto-fill with credentials"
-          >
-            <span style={{ marginRight: "6px" }}>⚡</span>
-            <span><strong>Quick Demo Account:</strong> Click to auto-fill details</span>
-          </div>
+          {/* ── Login Form ── */}
+          {view === "login" && (
+            <>
+              <h2 style={formTitleStyle}>Welcome Back</h2>
+              <p style={formSubtitleStyle}>Access your dashboard to interact with your agents</p>
 
-          {error && <div style={errorStyle}>{error}</div>}
+              <div onClick={handleQuickFill} style={demoBadgeStyle} title="Click to instantly auto-fill">
+                <span style={{ marginRight: "6px" }}>⚡</span>
+                <span><strong>Quick Demo Account:</strong> Click to auto-fill details</span>
+              </div>
 
-          <form onSubmit={handleSubmit} style={formStyle}>
-            <div style={inputGroupStyle}>
-              <label style={labelStyle}>Email Address</label>
-              <input
-                type="email"
-                placeholder="name@university.edu"
-                className="glass-input"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                disabled={loading}
-                style={inputStyle}
-              />
-            </div>
+              {error && <div style={errorStyle}>{error}</div>}
+              {successMsg && <div style={successStyle}>{successMsg}</div>}
 
-            <div style={inputGroupStyle}>
-              <label style={labelStyle}>Password</label>
-              <input
-                type="password"
-                placeholder="••••••••"
-                className="glass-input"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={6}
-                disabled={loading}
-                style={inputStyle}
-              />
-            </div>
+              <form onSubmit={handleSubmit} style={formStyle}>
+                <div style={inputGroupStyle}>
+                  <label style={labelStyle}>Email Address</label>
+                  <input
+                    type="email"
+                    placeholder="name@university.edu"
+                    className="glass-input"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    disabled={loading}
+                    style={inputStyle}
+                  />
+                </div>
 
-            <button
-              type="submit"
-              className="glass-btn glass-btn-primary"
-              style={submitBtnStyle}
-              disabled={loading}
-            >
-              {loading ? "Initializing Workspace..." : isLogin ? "Sign In & Access Swarm" : "Create Account"}
-            </button>
-          </form>
+                <div style={inputGroupStyle}>
+                  <label style={labelStyle}>Password</label>
+                  <div style={passwordWrapStyle}>
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      placeholder="••••••••"
+                      className="glass-input"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      minLength={6}
+                      disabled={loading}
+                      style={{ ...inputStyle, paddingRight: "48px", width: "100%", boxSizing: "border-box" }}
+                    />
+                    <button type="button" onClick={() => setShowPassword(!showPassword)} style={eyeBtnStyle} tabIndex={-1}>
+                      {showPassword ? "🙈" : "👁️"}
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => switchView("forgot")}
+                    style={forgotLinkStyle}
+                  >
+                    Forgot password?
+                  </button>
+                </div>
 
-          <div style={toggleContainerStyle}>
-            <p style={toggleTextStyle}>
-              {isLogin ? "New to EduAgent?" : "Already have an account?"}{" "}
-              <button
-                onClick={() => {
-                  setIsLogin(!isLogin);
-                  setError("");
-                }}
-                style={toggleBtnStyle}
-              >
-                {isLogin ? "Sign Up Free" : "Sign In Here"}
-              </button>
-            </p>
-          </div>
+                <button type="submit" className="glass-btn glass-btn-primary" style={submitBtnStyle} disabled={loading}>
+                  {loading ? "Signing In…" : "Sign In & Access Workspace"}
+                </button>
+              </form>
+
+              <div style={toggleContainerStyle}>
+                <p style={toggleTextStyle}>
+                  New to EduAgent?{" "}
+                  <button onClick={() => switchView("register")} style={toggleBtnStyle}>
+                    Sign Up Free
+                  </button>
+                </p>
+              </div>
+            </>
+          )}
+
+          {/* ── Register Form ── */}
+          {view === "register" && (
+            <>
+              <h2 style={formTitleStyle}>Create Account</h2>
+              <p style={formSubtitleStyle}>Register to initialize your personalized workspace</p>
+
+              {error && <div style={errorStyle}>{error}</div>}
+
+              <form onSubmit={handleSubmit} style={formStyle}>
+                <div style={inputGroupStyle}>
+                  <label style={labelStyle}>Full Name</label>
+                  <input
+                    type="text"
+                    placeholder="Your full name"
+                    className="glass-input"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    required
+                    disabled={loading}
+                    style={inputStyle}
+                  />
+                </div>
+
+                <div style={{ display: "flex", gap: "12px" }}>
+                  <div style={{ ...inputGroupStyle, flex: 1 }}>
+                    <label style={labelStyle}>Age</label>
+                    <input
+                      type="number"
+                      placeholder="Age"
+                      className="glass-input"
+                      value={age}
+                      onChange={(e) => setAge(e.target.value)}
+                      min={10}
+                      max={100}
+                      disabled={loading}
+                      style={inputStyle}
+                    />
+                  </div>
+                </div>
+
+                <div style={inputGroupStyle}>
+                  <label style={labelStyle}>I am a</label>
+                  <div style={roleGroupStyle}>
+                    {[
+                      { value: "school student", label: "🏫 School Student" },
+                      { value: "college student", label: "🎓 College Student" },
+                      { value: "professional", label: "💼 Professional" },
+                    ].map(({ value, label }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setRole(value)}
+                        style={{
+                          ...roleOptionStyle,
+                          ...(role === value ? roleOptionActiveStyle : {}),
+                        }}
+                        disabled={loading}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={inputGroupStyle}>
+                  <label style={labelStyle}>Email Address</label>
+                  <input
+                    type="email"
+                    placeholder="name@university.edu"
+                    className="glass-input"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    disabled={loading}
+                    style={inputStyle}
+                  />
+                </div>
+
+                <div style={inputGroupStyle}>
+                  <label style={labelStyle}>Password</label>
+                  <div style={passwordWrapStyle}>
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      placeholder="At least 6 characters"
+                      className="glass-input"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      minLength={6}
+                      disabled={loading}
+                      style={{ ...inputStyle, paddingRight: "48px", width: "100%", boxSizing: "border-box" }}
+                    />
+                    <button type="button" onClick={() => setShowPassword(!showPassword)} style={eyeBtnStyle} tabIndex={-1}>
+                      {showPassword ? "🙈" : "👁️"}
+                    </button>
+                  </div>
+                </div>
+
+                <button type="submit" className="glass-btn glass-btn-primary" style={submitBtnStyle} disabled={loading}>
+                  {loading ? "Creating Account…" : "Create Account"}
+                </button>
+              </form>
+
+              <div style={toggleContainerStyle}>
+                <p style={toggleTextStyle}>
+                  Already have an account?{" "}
+                  <button onClick={() => switchView("login")} style={toggleBtnStyle}>
+                    Sign In Here
+                  </button>
+                </p>
+              </div>
+            </>
+          )}
+
+          {/* ── Forgot Password Form ── */}
+          {view === "forgot" && (
+            <>
+              <h2 style={formTitleStyle}>Forgot Password?</h2>
+              <p style={formSubtitleStyle}>Enter your email and we'll send you a reset link</p>
+
+              {error && <div style={errorStyle}>{error}</div>}
+              {successMsg && <div style={successStyle}>{successMsg}</div>}
+
+              {!successMsg && (
+                <form onSubmit={handleSubmit} style={formStyle}>
+                  <div style={inputGroupStyle}>
+                    <label style={labelStyle}>Email Address</label>
+                    <input
+                      type="email"
+                      placeholder="name@university.edu"
+                      className="glass-input"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      required
+                      disabled={loading}
+                      style={inputStyle}
+                    />
+                  </div>
+
+                  <button type="submit" className="glass-btn glass-btn-primary" style={submitBtnStyle} disabled={loading}>
+                    {loading ? "Sending…" : "Send Reset Link"}
+                  </button>
+                </form>
+              )}
+
+              <div style={toggleContainerStyle}>
+                <p style={toggleTextStyle}>
+                  Remember your password?{" "}
+                  <button onClick={() => switchView("login")} style={toggleBtnStyle}>
+                    Back to Sign In
+                  </button>
+                </p>
+              </div>
+            </>
+          )}
+
+          {/* ── Reset Password Form ── */}
+          {view === "reset" && (
+            <>
+              <h2 style={formTitleStyle}>Reset Password</h2>
+              <p style={formSubtitleStyle}>Enter your new password below</p>
+
+              {error && <div style={errorStyle}>{error}</div>}
+              {successMsg && <div style={successStyle}>{successMsg}</div>}
+
+              {!successMsg && (
+                <form onSubmit={handleSubmit} style={formStyle}>
+                  <div style={inputGroupStyle}>
+                    <label style={labelStyle}>New Password</label>
+                    <div style={passwordWrapStyle}>
+                      <input
+                        type={showNewPassword ? "text" : "password"}
+                        placeholder="At least 6 characters"
+                        className="glass-input"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        required
+                        minLength={6}
+                        disabled={loading}
+                        style={{ ...inputStyle, paddingRight: "48px", width: "100%", boxSizing: "border-box" }}
+                      />
+                      <button type="button" onClick={() => setShowNewPassword(!showNewPassword)} style={eyeBtnStyle} tabIndex={-1}>
+                        {showNewPassword ? "🙈" : "👁️"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <button type="submit" className="glass-btn glass-btn-primary" style={submitBtnStyle} disabled={loading}>
+                    {loading ? "Updating…" : "Update Password"}
+                  </button>
+                </form>
+              )}
+
+              <div style={toggleContainerStyle}>
+                <p style={toggleTextStyle}>
+                  <button onClick={() => switchView("login")} style={toggleBtnStyle}>
+                    Back to Sign In
+                  </button>
+                </p>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-// ── Styles ───────────────────────────────────────────────────────────────────
-
+// ─────────────────────────────────────────────────────────────────────────────
+// Styles
+// ─────────────────────────────────────────────────────────────────────────────
 const containerStyle: React.CSSProperties = {
   display: "flex",
   minHeight: "100vh",
@@ -296,7 +547,6 @@ const containerStyle: React.CSSProperties = {
   overflow: "hidden",
 };
 
-// Left Hero Section
 const leftHeroStyle: React.CSSProperties = {
   flex: 1.1,
   backgroundColor: "#080c16",
@@ -340,9 +590,7 @@ const heroContentStyle: React.CSSProperties = {
   margin: "0 auto",
 };
 
-const heroLogoWrapperStyle: React.CSSProperties = {
-  marginBottom: "10px",
-};
+const heroLogoWrapperStyle: React.CSSProperties = { marginBottom: "10px" };
 
 const logoStyle: React.CSSProperties = {
   fontSize: "24px",
@@ -438,7 +686,6 @@ const dashboardTeaserStyle: React.CSSProperties = {
   marginTop: "10px",
 };
 
-// Right Form Section
 const rightFormStyle = (isMobile: boolean): React.CSSProperties => ({
   flex: 1,
   display: "flex",
@@ -448,6 +695,7 @@ const rightFormStyle = (isMobile: boolean): React.CSSProperties => ({
   padding: "40px 24px",
   position: "relative",
   backgroundColor: isMobile ? "var(--bg-primary)" : "transparent",
+  overflowY: "auto",
 });
 
 const mobileLogoWrapperStyle: React.CSSProperties = {
@@ -468,7 +716,7 @@ const glowRightStyle: React.CSSProperties = {
 
 const cardWrapperStyle: React.CSSProperties = {
   width: "100%",
-  maxWidth: "400px",
+  maxWidth: "420px",
   padding: "40px 32px",
   backgroundColor: "rgba(13, 17, 23, 0.45)",
   backdropFilter: "blur(24px)",
@@ -476,7 +724,6 @@ const cardWrapperStyle: React.CSSProperties = {
   borderRadius: "16px",
   boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.5)",
   zIndex: 2,
-  transition: "border-color 0.3s ease",
 };
 
 const formTitleStyle: React.CSSProperties = {
@@ -496,7 +743,6 @@ const formSubtitleStyle: React.CSSProperties = {
   lineHeight: 1.5,
 };
 
-// Pre-fill demo access badge
 const demoBadgeStyle: React.CSSProperties = {
   backgroundColor: "rgba(99, 102, 241, 0.08)",
   border: "1px dashed rgba(99, 102, 241, 0.35)",
@@ -516,6 +762,17 @@ const errorStyle: React.CSSProperties = {
   backgroundColor: "rgba(239, 68, 68, 0.08)",
   border: "1px solid rgba(239, 68, 68, 0.25)",
   color: "#f87171",
+  padding: "12px",
+  borderRadius: "8px",
+  fontSize: "13px",
+  marginBottom: "20px",
+  textAlign: "center",
+};
+
+const successStyle: React.CSSProperties = {
+  backgroundColor: "rgba(16, 185, 129, 0.08)",
+  border: "1px solid rgba(16, 185, 129, 0.25)",
+  color: "#34d399",
   padding: "12px",
   borderRadius: "8px",
   fontSize: "13px",
@@ -544,6 +801,67 @@ const labelStyle: React.CSSProperties = {
 const inputStyle: React.CSSProperties = {
   transition: "border-color var(--transition-smooth), box-shadow var(--transition-smooth)",
   backgroundColor: "rgba(0, 0, 0, 0.2)",
+};
+
+const passwordWrapStyle: React.CSSProperties = {
+  position: "relative",
+  display: "flex",
+  alignItems: "center",
+};
+
+const eyeBtnStyle: React.CSSProperties = {
+  position: "absolute",
+  right: "12px",
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  fontSize: "16px",
+  color: "var(--text-secondary)",
+  padding: "0",
+  lineHeight: 1,
+  display: "flex",
+  alignItems: "center",
+  zIndex: 2,
+};
+
+const forgotLinkStyle: React.CSSProperties = {
+  background: "none",
+  border: "none",
+  color: "var(--accent)",
+  fontSize: "12px",
+  cursor: "pointer",
+  textAlign: "right",
+  padding: 0,
+  fontFamily: "inherit",
+  alignSelf: "flex-end",
+};
+
+const roleGroupStyle: React.CSSProperties = {
+  display: "flex",
+  gap: "8px",
+  flexWrap: "wrap",
+};
+
+const roleOptionStyle: React.CSSProperties = {
+  flex: 1,
+  minWidth: "100px",
+  padding: "8px 10px",
+  borderRadius: "8px",
+  border: "1px solid rgba(255,255,255,0.1)",
+  backgroundColor: "rgba(255,255,255,0.03)",
+  color: "var(--text-secondary)",
+  fontSize: "12px",
+  cursor: "pointer",
+  fontFamily: "inherit",
+  transition: "all 0.2s ease",
+  textAlign: "center",
+};
+
+const roleOptionActiveStyle: React.CSSProperties = {
+  border: "1px solid var(--accent)",
+  backgroundColor: "rgba(99, 102, 241, 0.12)",
+  color: "#a5b4fc",
+  fontWeight: 600,
 };
 
 const submitBtnStyle: React.CSSProperties = {

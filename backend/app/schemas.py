@@ -15,6 +15,9 @@ class TokenData(BaseModel):
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=6, description="Password must be at least 6 characters long")
+    name: Optional[str] = None
+    age: Optional[int] = None
+    role: Optional[str] = None
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -23,10 +26,22 @@ class UserLogin(BaseModel):
 class UserResponse(BaseModel):
     id: int
     email: str
+    name: Optional[str] = None
+    age: Optional[int] = None
+    role: Optional[str] = None
     created_at: datetime.datetime
 
     class Config:
         from_attributes = True
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(..., min_length=6, description="Password must be at least 6 characters long")
 
 
 # --- Topic Schemas ---

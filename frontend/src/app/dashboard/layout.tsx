@@ -6,6 +6,9 @@ import Link from "next/link";
 
 interface UserInfo {
   email: string;
+  name?: string | null;
+  age?: number | null;
+  role?: string | null;
 }
 
 // Custom hook for responsive sidebar behaviour
@@ -211,7 +214,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return (
       <div style={loadingContainerStyle}>
         <div style={spinnerStyle}></div>
-        <p style={{ marginTop: "16px", color: "var(--text-secondary)" }}>Configuring Swarm Workspace...</p>
+        <p style={{ marginTop: "16px", color: "var(--text-secondary)" }}>Configuring Study Workspace...</p>
       </div>
     );
   }
@@ -347,11 +350,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {!effectiveCollapsed && (
             <div style={userProfileStyle}>
               <div style={avatarStyle}>
-                {user.email.substring(0, 2).toUpperCase()}
+                {user.name
+                  ? user.name.substring(0, 2).toUpperCase()
+                  : user.email.substring(0, 2).toUpperCase()}
               </div>
               <div style={userDetailsStyle}>
-                <span style={userEmailStyle} title={user.email}>{user.email.split("@")[0]}</span>
-                <span style={userRoleStyle}>Student</span>
+                <span style={userEmailStyle} title={user.name || user.email}>
+                  {user.name || user.email.split("@")[0]}
+                </span>
+                <span style={userRoleStyle}>
+                  {user.role
+                    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
+                    : "Student"}
+                </span>
               </div>
             </div>
           )}
@@ -420,10 +431,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <div style={profileDropdownStyle} className="glass-panel">
                   <div style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid var(--border-glass)", paddingBottom: "10px" }}>
                     <span style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {user.email}
+                      {user.name || user.email}
                     </span>
                     <span style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
-                      Learning Swarm Active
+                      {user.role
+                        ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
+                        : "Learning System Active"}
                     </span>
                   </div>
 

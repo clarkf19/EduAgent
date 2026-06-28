@@ -16,6 +16,23 @@ from dotenv import load_dotenv
 import chromadb
 from sentence_transformers import SentenceTransformer
 
+# Apply Windows/SQLite compatibility patch for ChromaDB 0.5.0
+try:
+    import chromadb.segment.impl.metadata.sqlite as chroma_sqlite
+    orig_decode = chroma_sqlite._decode_seq_id
+
+    def patched_decode(seq_id_bytes):
+        if isinstance(seq_id_bytes, int):
+            return seq_id_bytes
+        if isinstance(seq_id_bytes, bytes):
+            return orig_decode(seq_id_bytes)
+        raise TypeError(f"Unexpected type for seq_id_bytes: {type(seq_id_bytes)}")
+
+    chroma_sqlite._decode_seq_id = patched_decode
+except Exception as e:
+    pass
+
+
 # Load environment variables
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 

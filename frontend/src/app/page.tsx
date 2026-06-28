@@ -25,7 +25,7 @@ export default function Home() {
             Supercharge Your Learning with <span style={highlightStyle}>Cooperative AI Agents</span>
           </h1>
           <p style={subtitleStyle}>
-            Upload your lecture slides, notes, and textbook PDFs. Our swarm of specialized AI agents works in harmony to explain concepts, solve doubts, generate adaptive quizzes, and construct personalized study plans.
+            Upload your lecture slides, notes, and textbook PDFs. Our team of specialized AI agents works in harmony to explain concepts, solve doubts, generate adaptive quizzes, and construct personalized study plans.
           </p>
           <div style={ctaContainerStyle}>
             <Link href="/auth" style={primaryCtaStyle} className="glass-btn glass-btn-primary">

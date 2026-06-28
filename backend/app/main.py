@@ -14,7 +14,7 @@ from typing import List, Optional
 from .database import engine, Base, get_db
 from .models import User, Topic, StudySession, QuizAttempt, Document, StudyGoal
 from .schemas import (
-    UserCreate, UserResponse, Token,
+    UserCreate, UserResponse, Token, ForgotPasswordRequest, ResetPasswordRequest,
     StudySessionResponse, StudySessionCreate,
     DocumentResponse, DocumentStats,
     ChatRequest, ChatResponse,
@@ -88,6 +88,22 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     Base.metadata.create_all(bind=engine)
+    # Run SQLite migration to add new columns to users table if they don't exist
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        for col_name, col_type in [
+            ("name", "VARCHAR"),
+            ("age", "INTEGER"),
+            ("role", "VARCHAR"),
+            ("reset_token", "VARCHAR"),
+            ("reset_token_expires", "TIMESTAMP")
+        ]:
+            try:
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
+                conn.commit()
+                logger.info(f"Added column {col_name} to users table.")
+            except Exception:
+                pass
     get_or_create_collection()
     predictor.train()
     logger.info("Database tables ensured. ChromaDB collection and ML predictor ready.")
@@ -444,14 +460,21 @@ def read_root():
 # ─────────────────────────────────────────────────────────────────────────────
 @app.post("/api/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(user_data: UserCreate, db: Session = Depends(get_db)):
-    existing_user = db.query(User).filter(User.email == user_data.email).first()
+    email_lower = user_data.email.lower() if user_data.email else ""
+    existing_user = db.query(User).filter(User.email == email_lower).first()
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email is already registered",
         )
     hashed_pwd = get_password_hash(user_data.password)
-    db_user = User(email=user_data.email, hashed_password=hashed_pwd)
+    db_user = User(
+        email=email_lower,
+        hashed_password=hashed_pwd,
+        name=user_data.name,
+        age=user_data.age,
+        role=user_data.role,
+    )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
@@ -460,7 +483,8 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)):
 
 @app.post("/api/auth/login", response_model=Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == form_data.username).first()
+    email_lower = form_data.username.lower() if form_data.username else ""
+    user = db.query(User).filter(User.email == email_lower).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -474,6 +498,130 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 @app.get("/api/auth/me", response_model=UserResponse)
 def get_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@app.post("/api/auth/forgot-password")
+def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """Generate a password reset token and email it to the user."""
+    import secrets
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from dotenv import load_dotenv
+    # Re-read .env so new SMTP settings take effect without full restart
+    load_dotenv(override=True)
+
+    email_lower = payload.email.lower()
+    user = db.query(User).filter(User.email == email_lower).first()
+    # Always return 200 to avoid email enumeration attacks
+    if not user:
+        return {"message": "If that email is registered, a reset link has been sent."}
+
+    # Generate secure token and set expiry (1 hour)
+    token = secrets.token_urlsafe(32)
+    user.reset_token = token
+    user.reset_token_expires = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+    db.commit()
+
+    # Build the reset URL
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    reset_link = f"{frontend_url}/auth/reset-password?token={token}"
+
+    # Read SMTP config fresh from env
+    smtp_host = os.getenv("SMTP_HOST", "")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USERNAME", "")
+    smtp_pass = os.getenv("SMTP_PASSWORD", "")
+
+    display_name = user.name or user.email.split('@')[0]
+
+    if smtp_host and smtp_user and smtp_pass:
+        try:
+            plain_body = (
+                f"Hi {display_name},\n\n"
+                "Reset your EduAgent password using the link below (expires in 1 hour):\n"
+                f"{reset_link}\n\n"
+                "If you didn't request this, ignore this email.\n\n"
+                "\u2013 EduAgent Team"
+            )
+            html_body = (
+                "<!DOCTYPE html><html><head><meta charset='UTF-8'></head>"
+                "<body style='margin:0;padding:0;background:#0d1117;font-family:Segoe UI,Arial,sans-serif;'>"
+                "<table width='100%' cellpadding='0' cellspacing='0' style='background:#0d1117;padding:40px 0;'>"
+                "<tr><td align='center'>"
+                "<table width='560' cellpadding='0' cellspacing='0' style='background:#161b22;border-radius:16px;border:1px solid #30363d;overflow:hidden;max-width:560px;'>"
+                "<tr><td style='background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:32px 40px;text-align:center;'>"
+                "<span style='font-size:26px;font-weight:800;color:#fff;'>&#9679; EduAgent</span>"
+                "<p style='color:rgba(255,255,255,0.8);margin:8px 0 0;font-size:14px;'>AI-Powered Learning Platform</p>"
+                "</td></tr>"
+                "<tr><td style='padding:40px;'>"
+                "<h2 style='color:#f0f6fc;font-size:22px;margin:0 0 12px;font-weight:700;'>Password Reset Request</h2>"
+                f"<p style='color:#8b949e;font-size:15px;line-height:1.6;margin:0 0 24px;'>"
+                f"Hi <strong style='color:#c9d1d9;'>{display_name}</strong>,<br><br>"
+                f"We received a request to reset the password for your EduAgent account "
+                f"(<strong style='color:#c9d1d9;'>{user.email}</strong>). "
+                "Click the button below to set a new password.</p>"
+                "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+                "<td align='center' style='padding:8px 0 32px;'>"
+                f"<a href='{reset_link}' style='display:inline-block;background:linear-gradient(135deg,#6366f1,#5356e3);color:#fff;text-decoration:none;font-size:15px;font-weight:600;padding:14px 36px;border-radius:8px;'>Reset My Password</a>"
+                "</td></tr></table>"
+                "<p style='color:#8b949e;font-size:13px;margin:0 0 8px;'>Button not working? Copy and paste this link into your browser:</p>"
+                f"<p style='word-break:break-all;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px 14px;font-size:12px;color:#6366f1;margin:0 0 28px;'>{reset_link}</p>"
+                "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
+                "<td style='background:#1c2128;border:1px solid #30363d;border-radius:8px;padding:16px;'>"
+                "<p style='color:#8b949e;font-size:13px;margin:0;line-height:1.5;'>"
+                "This link expires in <strong style='color:#c9d1d9;'>1 hour</strong>.<br>"
+                "If you didn't request this, you can safely ignore this email."
+                "</p></td></tr></table>"
+                "</td></tr>"
+                "<tr><td style='border-top:1px solid #30363d;padding:20px 40px;text-align:center;'>"
+                "<p style='color:#484f58;font-size:12px;margin:0;'>&copy; 2026 EduAgent</p>"
+                "</td></tr>"
+                "</table></td></tr></table></body></html>"
+            )
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = "EduAgent \u2013 Reset Your Password"
+            msg["From"] = f"EduAgent <{smtp_user}>"
+            msg["To"] = user.email
+            msg.attach(MIMEText(plain_body, "plain"))
+            msg.attach(MIMEText(html_body, "html"))
+
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [user.email], msg.as_string())
+            logger.info(f"Password reset email sent successfully to {user.email}")
+        except Exception as e:
+            logger.error(f"Failed to send reset email to {user.email}: {e}")
+    else:
+        logger.warning("SMTP not configured. Reset link logged to console.")
+        print(f"\n\U0001f517 PASSWORD RESET LINK for {user.email}:\n{reset_link}\n")
+
+    return {"message": "If that email is registered, a reset link has been sent."}
+
+
+
+@app.post("/api/auth/reset-password")
+def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """Validate reset token and update the user's password."""
+    user = db.query(User).filter(User.reset_token == payload.token).first()
+    if not user or not user.reset_token_expires:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token.",
+        )
+    if datetime.datetime.utcnow() > user.reset_token_expires:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reset token has expired. Please request a new one.",
+        )
+    user.hashed_password = get_password_hash(payload.new_password)
+    user.reset_token = None
+    user.reset_token_expires = None
+    db.commit()
+    return {"message": "Password updated successfully. You can now sign in with your new password."}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

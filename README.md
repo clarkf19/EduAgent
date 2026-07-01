@@ -2,10 +2,24 @@
 
 [![Next.js](https://img.shields.io/badge/Frontend-Next.js%2016-blue?logo=nextdotjs&logoColor=white&style=flat-square)](https://nextjs.org/)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-green?logo=fastapi&logoColor=white&style=flat-square)](https://fastapi.tiangolo.com/)
+[![Docker](https://img.shields.io/badge/Container-Docker-blue?logo=docker&logoColor=white&style=flat-square)](https://www.docker.com/)
 [![ChromaDB](https://img.shields.io/badge/VectorDB-ChromaDB-orange?style=flat-square)](https://www.trychroma.com/)
 [![LangChain](https://img.shields.io/badge/Framework-LangChain-red?style=flat-square)](https://www.langchain.com/)
 
-**EduAgent** is a production-grade multi-agent learning platform that transforms dense study materials (lecture slides, notes, and textbooks) into interactive, personalized educational pathways. By coordinating a cooperative swarm of specialized AI agents, the platform constructs concept mind maps, generates adaptive practice quizzes, designs day-by-day study calendars, and answers complex follow-up questions with precise citations.
+**EduAgent** is a production-grade, containerized multi-agent learning platform that transforms dense study materials (lecture slides, notes, and textbooks) into interactive, personalized educational pathways. By coordinating a cooperative swarm of specialized AI agents, the platform constructs concept mind maps, generates adaptive practice quizzes, designs day-by-day study calendars, and answers complex queries with precise citations.
+
+---
+
+## 🧠 AI & Machine Learning Implementation
+
+EduAgent leverages state-of-the-art Natural Language Processing (NLP) and Retrieval-Augmented Generation (RAG) paradigms:
+
+*   **Vector Embeddings & Semantic Search**: Uses the SentenceTransformers model (`all-MiniLM-L6-v2`) to translate raw PDF text chunks into 384-dimensional dense vectors.
+*   **Vector Database (ChromaDB)**: Indices and query embeddings with filter options (e.g., subject-grounding metadata) for low-latency semantic chunk retrieval.
+*   **Retrieval-Augmented Generation (RAG)**: Connects retrieved knowledge chunks directly to LLM prompts, ensuring answers from the Doubt Solver are grounded in the student's materials.
+*   **Multi-Model LLM Orchestration**:
+    *   **Groq API (Llama 3.3 70B)**: Serves low-latency subjective and multiple-choice quiz questions, adapting difficulty (Beginner, Intermediate, Advanced) based on user score metrics.
+    *   **Google Gemini API**: Utilized for parsing layouts and rendering study-mastery analytics profiles.
 
 ---
 
@@ -15,7 +29,7 @@ The workspace coordinates four autonomous agents to optimize academic performanc
 
 *   **👨‍🏫 Teacher Agent**: Analyzes uploaded document files, extracts core concepts, structures definitions, and compiles real-world study guides.
 *   **💬 Doubt Solver**: Answers student queries, retrieving context from the vector database and citing original source documents with inline footnotes.
-*   **📝 Quiz Generator**: Formulates personalized, multiple-choice practice quizzes that scale in difficulty (Beginner, Intermediate, Advanced) based on performance logs.
+*   **📝 Quiz Generator**: Formulates personalized, multiple-choice practice quizzes that scale in difficulty based on performance logs.
 *   **📅 Study Planner**: Generates calendar roadmaps mapping milestones from study topics directly to your exam date.
 
 ---
@@ -42,20 +56,22 @@ graph TD
 
 ---
 
+## 🐳 Docker Containerization
+
+The stack is fully containerized using a production-ready **Docker Compose** orchestrator:
+
+*   **Backend Container**: A Debian-slim python image optimized for running web-services and hosting vector calculations. Baked with custom C-libraries (`libgomp1`) for running heavy ML routines. Exposes port `8000`.
+*   **Frontend Container**: Utilizes a Node-alpine builder stage and multi-stage runner to isolate Next.js standalone build outputs, minimizing the final production image size. Exposes port `3000`.
+*   **Nginx Proxy Container**: Orchestrates incoming traffic on port `80`, routing requests starting with `/api/` directly to the FastAPI container, and all other routes to the Next.js container inside an isolated bridge network (`eduagent-net`).
+*   **Persistent Storage Volumes**: Uses a persistent Docker volume (`eduagent_data`) to prevent user account SQLite records and vector indexing databases from being wiped on container rebuilds.
+
+---
+
 ## ⚡ Tech Stack
 
-### Frontend
-*   **Next.js 16** (App Router) & TypeScript
-*   **Vanilla CSS Glassmorphism** (Zero tailwind bloat, tailored dark themes, sleek responsive grids)
-*   **HTML5 Canvas** (Dynamic mind map node layouts with physics-based coordinates)
-*   **Vercel** (Global CDN and static edge hosting)
-
-### Backend
-*   **FastAPI** (Python 3.11 asynchronous web framework)
-*   **LangChain** (Agent routing and chain integration)
-*   **ChromaDB** (Local vector database indexing embeddings)
-*   **SQLAlchemy & SQLite** (User profile analytics, quiz logs, and study schedules)
-*   **Models**: Groq (Llama 3.3 70B for instant quiz compilation) & Google Gemini (for advanced grounding/parsing)
+*   **Frontend**: Next.js 16 (App Router), TypeScript, Vanilla CSS Glassmorphism, HTML5 Canvas (physics-drawn mindmap graphs).
+*   **Backend**: FastAPI, LangChain, SQLAlchemy, Pydantic, SQLite.
+*   **Deployment**: Vercel (Frontend Global Edge Routing) & DigitalOcean (Backend Droplet with Let's Encrypt SSL Nginx Reverse-Proxy).
 
 ---
 
@@ -66,7 +82,7 @@ graph TD
 *   Python (3.11+)
 *   Docker & Docker Compose (optional)
 
-### Backend Configuration
+### Backend Setup
 1. Navigate to the backend directory:
    ```bash
    cd backend
@@ -75,7 +91,7 @@ graph TD
    ```bash
    cp .env.example .env
    ```
-3. Populate your `.env` with your API keys (e.g. `GROQ_API_KEY`, `GEMINI_API_KEY`, and Gmail App credentials for SMTP password resets).
+3. Populate your `.env` with your API keys.
 4. Create a virtual environment and install dependencies:
    ```bash
    python -m venv .venv
@@ -87,7 +103,7 @@ graph TD
    uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
    ```
 
-### Frontend Configuration
+### Frontend Setup
 1. Navigate to the frontend directory:
    ```bash
    cd ../frontend
@@ -108,12 +124,12 @@ graph TD
 
 ---
 
-## 🐳 Docker Deployment (Self-Hosted)
-To spin up the entire application stack locally using Docker:
+## 🐳 Docker Deployment (Full Stack)
+To build and run the entire system with Docker Compose:
 ```bash
 docker-compose up --build
 ```
-This builds the backend, builds the Next.js frontend, and configures an Nginx reverse-proxy on port `80`.
+Once initialized, visit [http://localhost](http://localhost).
 
 ---
 

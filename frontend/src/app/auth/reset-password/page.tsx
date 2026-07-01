@@ -1,12 +1,12 @@
 "use client";
 
 // This page redirects to /auth with the token in the URL so the auth page can handle it.
-// This avoids duplicating the reset form logic.
+// useSearchParams() must be wrapped in Suspense per Next.js App Router requirements.
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-export default function ResetPasswordPage() {
+function ResetPasswordRedirect() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -23,5 +23,19 @@ export default function ResetPasswordPage() {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", backgroundColor: "var(--bg-primary)" }}>
       <p style={{ color: "var(--text-secondary)" }}>Redirecting to reset password form…</p>
     </div>
+  );
+}
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense
+      fallback={
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", backgroundColor: "var(--bg-primary)" }}>
+          <p style={{ color: "var(--text-secondary)" }}>Loading…</p>
+        </div>
+      }
+    >
+      <ResetPasswordRedirect />
+    </Suspense>
   );
 }

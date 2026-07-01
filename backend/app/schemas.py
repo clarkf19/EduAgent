@@ -144,6 +144,7 @@ class QuizGenerateRequest(BaseModel):
     topic: str
     difficulty: str = "Intermediate"
     num_questions: int = 5
+    subject: Optional[str] = None
 
 class QuizQuestion(BaseModel):
     id: int
@@ -217,3 +218,41 @@ class CoachReportResponse(BaseModel):
     report: str
     model: str
 
+
+# --- Flashcard Schemas ---
+class FlashcardGenerateRequest(BaseModel):
+    subject: str
+    topic: Optional[str] = None
+    num_cards: int = 5
+
+class FlashcardReviewSubmit(BaseModel):
+    rating: str  # "easy", "medium", or "hard"
+
+class FlashcardResponse(BaseModel):
+    id: int
+    user_id: int
+    front: str
+    back: str
+    subject: str
+    leitner_box: int
+    next_review: datetime.datetime
+    created_at: datetime.datetime
+
+    class Config:
+        from_attributes = True
+
+
+# --- Analytics / Mastery Schemas ---
+class SubjectMastery(BaseModel):
+    subject: str
+    quiz_score_avg: float
+    study_hours: float
+    mastery_pct: float
+    quiz_count: int
+
+class MasteryResponse(BaseModel):
+    subjects: List[SubjectMastery]
+    overall_mastery: float
+    weaknesses: List[str]
+    ai_recommendations: str
+    model: str

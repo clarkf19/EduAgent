@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from .database import engine, Base, get_db
-from .models import User, Topic, StudySession, QuizAttempt, Document, StudyGoal
+from .models import User, Topic, StudySession, QuizAttempt, Document, StudyGoal, Flashcard
 from .schemas import (
     UserCreate, UserResponse, Token, ForgotPasswordRequest, ResetPasswordRequest,
     StudySessionResponse, StudySessionCreate,
@@ -22,6 +22,7 @@ from .schemas import (
     StudyPlanRequest, StudyPlanResponse,
     StudyGoalCreate, StudyGoalResponse,
     CoachReportRequest, CoachReportResponse,
+    FlashcardGenerateRequest, FlashcardReviewSubmit, FlashcardResponse, MasteryResponse,
 )
 from .auth import get_password_hash, verify_password, create_access_token, get_current_user
 from .chroma_client import (
@@ -33,6 +34,7 @@ from .agents.explainer_agent import run_explainer
 from .agents.quiz_agent import run_quiz_generator
 from .agents.study_plan_agent import run_study_plan
 from .agents.coach_agent import run_coach_report
+from .agents.flashcard_agent import run_flashcard_generator
 from .predictor import PerformancePredictor
 
 logger = logging.getLogger(__name__)
@@ -857,9 +859,10 @@ def get_dashboard_analytics(current_user: User = Depends(get_current_user), db: 
     else:
         quiz_avg = 0.0
 
-    # 3. Fetch documents to compute syllabus completion rate
+    # 3. Fetch documents
     docs_count = db.query(Document).filter(Document.user_id == current_user.id).count()
-    completion_rate = min(docs_count * 0.25, 1.0) # 4 docs = 100% completion in baseline
+    # Completion rate used for ML predictor (doc-based proxy)
+    completion_rate = min(docs_count / 8.0, 1.0)  # 8 docs = 100% for predictor input
 
     # Determine if user has any active learning data
     has_data = bool(quizzes_count > 0 or docs_count > 0 or len(sessions) > 0)
@@ -882,7 +885,7 @@ def get_dashboard_analytics(current_user: User = Depends(get_current_user), db: 
         {"title": "Study Hours", "value": f"{study_hours:.1f}", "trend": "up" if study_hours > 0 else "neutral", "percentage": "12%" if study_hours > 0 else "0%"},
         {"title": "Quizzes Attempted", "value": str(quizzes_count), "trend": "up" if quizzes_count > 0 else "neutral", "percentage": "8%" if quizzes_count > 0 else "0%"},
         {"title": "Average Score", "value": f"{int(quiz_avg)}%", "trend": "up" if quiz_avg >= 70 else "down" if quiz_avg > 0 else "neutral", "percentage": "3%" if quiz_avg > 0 else "0%"},
-        {"title": "Syllabus Mastered", "value": f"{int(completion_rate * 100)}%", "trend": "up" if completion_rate > 0 else "neutral", "percentage": "15%" if completion_rate > 0 else "0%"},
+        {"title": "Quiz Performance", "value": f"{int(quiz_avg)}%", "trend": "up" if quiz_avg >= 70 else "down" if quiz_avg > 0 else "neutral", "percentage": f"+{int(quiz_avg - 50)}%" if quiz_avg > 50 else "0%"},
     ]
 
     # Gather unique subjects from documents and quiz attempts
@@ -1030,6 +1033,7 @@ def generate_quiz(
             difficulty=req.difficulty,
             num_questions=req.num_questions,
             user_id=current_user.id,
+            subject=req.subject,
         )
         return QuizGenerateResponse(
             questions=res["questions"],
@@ -1281,4 +1285,314 @@ def delete_study_goal(
     db.delete(goal)
     db.commit()
     return {"status": "success", "message": "Study goal deleted successfully"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Spaced Repetition Flashcard Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post("/api/flashcards/generate", response_model=List[FlashcardResponse])
+def generate_flashcards(
+    req: FlashcardGenerateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    key: Optional[str] = Depends(get_groq_api_key),
+):
+    topic_str = req.topic or ""
+    query_str = topic_str if topic_str else req.subject
+    
+    cards_data = []
+    if not key:
+        logger.info("GROQ_API_KEY is not set. Generating mock flashcards.")
+        query_lower = query_str.lower()
+        
+        matched_bank = None
+        for k, v in {
+            "merge sort": [
+                {"front": "What algorithmic paradigm does Merge Sort use?", "back": "Divide and Conquer. It recursively splits the array in half, sorts the halves, and then merges them."},
+                {"front": "What is the worst-case time complexity of Merge Sort?", "back": "O(n log n). Splitting takes O(log n) levels, and merging takes O(n) work per level, regardless of input distribution."},
+                {"front": "Is Merge Sort a stable sorting algorithm?", "back": "Yes. It preserves the relative order of duplicate elements because of how elements are compared and placed during the merge step."},
+                {"front": "What is the main drawback of Merge Sort?", "back": "Space complexity. It requires O(n) auxiliary space to store temporary subarrays during the merge step, unlike in-place algorithms like Quick Sort."},
+                {"front": "Compare the space complexity of Merge Sort vs Quick Sort.", "back": "Merge Sort is O(n) due to temporary merge arrays. Quick Sort is O(log n) on average due to recursive call stack storage."}
+            ],
+            "quick sort": [
+                {"front": "What is the worst-case time complexity of Quick Sort, and when does it occur?", "back": "O(n²). It occurs when the partition pivot is consistently the smallest or largest element, e.g., on already sorted data with a naive pivot choice."},
+                {"front": "What is the average-case time complexity of Quick Sort?", "back": "O(n log n). This occurs when the pivot splits the array into reasonably balanced partitions."},
+                {"front": "Explain the concept of 'in-place' in relation to Quick Sort.", "back": "Quick Sort is in-place because it rearranges elements within the original array, requiring only O(log n) call stack space for recursion, rather than a full copy of the dataset."},
+                {"front": "Why is random pivot selection used in Quick Sort?", "back": "It randomizes the partitions to prevent the worst-case O(n²) runtime from occurring on already sorted or reverse-sorted inputs."},
+                {"front": "Is standard Quick Sort stable?", "back": "No, standard Quick Sort is not stable because swapping elements around the pivot can change the relative order of equal items."}
+            ],
+            "binary search": [
+                {"front": "What is the time complexity of Binary Search?", "back": "O(log n). The search space is divided in half with each comparison."},
+                {"front": "What precondition must be met before performing Binary Search?", "back": "The array/list must be sorted. Binary search relies on the ordering to eliminate half of the elements at each step."},
+                {"front": "Explain the calculation of the middle index to avoid integer overflow.", "back": "Use mid = lo + (hi - lo) // 2 instead of (lo + hi) // 2 to avoid overflow when sum of lo and hi exceeds max integer limit."},
+                {"front": "What is the space complexity of iterative Binary Search?", "back": "O(1) auxiliary space, as it only uses a few pointers to track the current search range."},
+                {"front": "What is the worst-case number of comparisons for Binary Search on a list of size N?", "back": "floor(log2(N)) + 1 comparisons."}
+            ]
+        }.items():
+            if k in query_lower:
+                matched_bank = v
+                break
+        
+        if matched_bank:
+            cards_data = matched_bank[:req.num_cards]
+        else:
+            cards_data = [
+                {"front": f"What is the definition of {query_str}?", "back": f"A key concept in {req.subject} representing a core structure or algorithm."},
+                {"front": f"Name a primary use case or application of {query_str}.", "back": f"It is widely used in {req.subject} to build scalable, correct, and optimal solutions."},
+                {"front": f"What are the key trade-offs when using {query_str}?", "back": "Time complexity vs memory usage, and implementation simplicity vs execution speed."},
+                {"front": f"How does {query_str} scale with larger datasets?", "back": "Scales based on its complexity, usually requiring caching, indexing, or load balancing in large systems."},
+                {"front": f"What is a common error or pitfall when implementing {query_str}?", "back": "Edge cases like boundary conditions, null/empty inputs, and thread concurrency errors."}
+            ][:req.num_cards]
+    else:
+        try:
+            res = run_flashcard_generator(
+                subject=req.subject,
+                topic=req.topic,
+                num_cards=req.num_cards,
+                api_key=key,
+                user_id=current_user.id
+            )
+            cards_data = res["cards"]
+        except Exception as e:
+            logger.exception("Flashcard generator agent failed")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Flashcard generator error: {str(e)}"
+            )
+
+    db_cards = []
+    for c in cards_data:
+        db_card = Flashcard(
+            user_id=current_user.id,
+            front=c["front"],
+            back=c["back"],
+            subject=req.subject,
+            leitner_box=1,
+            next_review=datetime.datetime.utcnow(),
+            created_at=datetime.datetime.utcnow(),
+        )
+        db.add(db_card)
+        db_cards.append(db_card)
+    db.commit()
+    for card in db_cards:
+        db.refresh(card)
+        
+    return db_cards
+
+
+@app.get("/api/flashcards", response_model=List[FlashcardResponse])
+def get_flashcards(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return db.query(Flashcard).filter(Flashcard.user_id == current_user.id).all()
+
+
+@app.get("/api/flashcards/review", response_model=List[FlashcardResponse])
+def get_due_flashcards(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    now = datetime.datetime.utcnow()
+    return db.query(Flashcard).filter(
+        Flashcard.user_id == current_user.id,
+        Flashcard.next_review <= now
+    ).all()
+
+
+@app.post("/api/flashcards/{flashcard_id}/review", response_model=FlashcardResponse)
+def review_flashcard(
+    flashcard_id: int,
+    req: FlashcardReviewSubmit,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    card = db.query(Flashcard).filter(
+        Flashcard.id == flashcard_id,
+        Flashcard.user_id == current_user.id
+    ).first()
+    
+    if not card:
+        raise HTTPException(status_code=404, detail="Flashcard not found")
+        
+    rating = req.rating.lower()
+    
+    if rating == "easy":
+        card.leitner_box = min(card.leitner_box + 1, 5)
+    elif rating == "medium":
+        pass
+    elif rating == "hard":
+        card.leitner_box = 1
+    else:
+        raise HTTPException(status_code=400, detail="Invalid review rating. Choose 'easy', 'medium', or 'hard'")
+        
+    intervals = {
+        1: datetime.timedelta(hours=1),
+        2: datetime.timedelta(days=1),
+        3: datetime.timedelta(days=3),
+        4: datetime.timedelta(days=7),
+        5: datetime.timedelta(days=14),
+    }
+    
+    interval = intervals.get(card.leitner_box, datetime.timedelta(hours=1))
+    card.next_review = datetime.datetime.utcnow() + interval
+    
+    db.commit()
+    db.refresh(card)
+    return card
+
+
+@app.delete("/api/flashcards/{flashcard_id}")
+def delete_flashcard(
+    flashcard_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    card = db.query(Flashcard).filter(
+        Flashcard.id == flashcard_id,
+        Flashcard.user_id == current_user.id
+    ).first()
+    
+    if not card:
+        raise HTTPException(status_code=404, detail="Flashcard not found")
+        
+    db.delete(card)
+    db.commit()
+    return {"status": "success", "message": "Flashcard deleted successfully"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI Study Analytics & Mastery Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+from .schemas import SubjectMastery
+
+@app.get("/api/analytics/mastery", response_model=MasteryResponse)
+def get_study_mastery(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    key: Optional[str] = Depends(get_groq_api_key)
+):
+    sessions = db.query(StudySession).filter(StudySession.user_id == current_user.id).all()
+    attempts = db.query(QuizAttempt).filter(QuizAttempt.user_id == current_user.id).all()
+    
+    subjects = [s for s in ALLOWED_SUBJECTS if s != "Other"]
+    
+    topics = db.query(Topic).all()
+    topic_to_subject = {t.id: t.subject for t in topics}
+    
+    study_seconds_by_subject = {}
+    for s in sessions:
+        subj = "General"
+        if s.topic_id and s.topic_id in topic_to_subject:
+            subj = topic_to_subject[s.topic_id]
+        study_seconds_by_subject[subj] = study_seconds_by_subject.get(subj, 0.0) + (s.duration or 0.0)
+        
+    quiz_scores_by_subject = {}
+    for a in attempts:
+        subj = "General"
+        if a.topic_id and a.topic_id in topic_to_subject:
+            subj = topic_to_subject[a.topic_id]
+        elif a.topic and a.topic.subject:
+            subj = a.topic.subject
+        if subj not in quiz_scores_by_subject:
+            quiz_scores_by_subject[subj] = []
+        quiz_scores_by_subject[subj].append(a.score)
+        
+    subject_masteries = []
+    weaknesses = []
+    
+    for subj in subjects:
+        hours = study_seconds_by_subject.get(subj, 0.0) / 3600.0
+        scores = quiz_scores_by_subject.get(subj, [])
+        avg_score = sum(scores) / len(scores) if scores else 0.0
+        
+        if scores:
+            hours_component = min(hours / 10.0, 1.0) * 30.0
+            score_component = (avg_score / 100.0) * 70.0
+            mastery = score_component + hours_component
+        else:
+            mastery = min(hours / 10.0, 1.0) * 50.0
+            
+        mastery = round(min(max(mastery, 0.0), 100.0), 1)
+        
+        subject_masteries.append(SubjectMastery(
+            subject=subj,
+            quiz_score_avg=round(avg_score, 1),
+            study_hours=round(hours, 2),
+            mastery_pct=mastery,
+            quiz_count=len(scores)
+        ))
+        
+        if (scores and avg_score < 70.0) or (hours > 1.0 and not scores):
+            weaknesses.append(subj)
+            
+    total_study_hours = sum(s.duration or 0.0 for s in sessions) / 3600.0
+    all_scores = [a.score for a in attempts]
+    overall_quiz_avg = sum(all_scores) / len(all_scores) if all_scores else 0.0
+    
+    active_masteries = [sm.mastery_pct for sm in subject_masteries if sm.quiz_count > 0 or sm.study_hours > 0]
+    overall_mastery = sum(active_masteries) / len(active_masteries) if active_masteries else 0.0
+    overall_mastery = round(min(max(overall_mastery, 0.0), 100.0), 1)
+    
+    ai_recommendations = ""
+    model_name = "demo-coach-model"
+    
+    subject_details_str = "\n".join([
+        f"- {sm.subject}: Study Hours = {sm.study_hours:.1f}, Quiz Avg = {sm.quiz_score_avg:.1f}%, Mastery = {sm.mastery_pct}%"
+        for sm in subject_masteries
+    ])
+    
+    if key:
+        from langchain_groq import ChatGroq
+        from langchain_core.messages import HumanMessage
+        try:
+            llm = ChatGroq(
+                model="llama-3.3-70b-versatile",
+                groq_api_key=key,
+                temperature=0.3,
+                max_tokens=500
+            )
+            prompt = f"""You are EduAgent's expert AI Coach. Analyze this student's performance report:
+User: {current_user.email.split("@")[0]}
+Overall Study Hours: {total_study_hours:.1f} hours
+Overall Quiz Average: {overall_quiz_avg:.1f}%
+
+Performance details by subject:
+{subject_details_str}
+
+Identify their primary weaknesses and provide 3 concrete, actionable learning recommendations (e.g. which subjects to study, what kinds of practice to focus on, how to use flashcards). Keep it encouraging and bulleted. Keep the entire response under 150 words."""
+            
+            res = llm.invoke([HumanMessage(content=prompt)])
+            ai_recommendations = res.content.strip()
+            model_name = "llama-3.3-70b-versatile (Groq)"
+        except Exception as e:
+            logger.warning(f"AI Coach API call failed: {e}")
+            key = None
+            
+    if not key:
+        if not weaknesses:
+            ai_recommendations = (
+                "### Excellent Work!\n"
+                "• You have consistent mastery across all subjects. Maintain this pace!\n"
+                "• Start testing yourself with **Advanced** difficulty quizzes to push your boundaries.\n"
+                "• Use the Flashcards page regularly to ensure long-term retention of key concepts."
+            )
+        else:
+            weaknesses_str = ", ".join(weaknesses)
+            ai_recommendations = (
+                f"### Actions to Improve in {weaknesses_str}:\n"
+                f"• **Focus Study**: Dedicate your next study session specifically to **{weaknesses[0]}** to raise your performance.\n"
+                "• **Generate Flashcards**: Use the Flashcard generator on these topics. Spaced repetition will help commit core terms to memory.\n"
+                "• **Targeted Quizzes**: Take 2-3 short quizzes at **Beginner** or **Intermediate** level in your weak areas before advancing."
+            )
+            
+    return MasteryResponse(
+        subjects=subject_masteries,
+        overall_mastery=overall_mastery,
+        weaknesses=weaknesses,
+        ai_recommendations=ai_recommendations,
+        model=model_name
+    )
 

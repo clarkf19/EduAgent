@@ -506,6 +506,7 @@ export default function QuizPage() {
             topic: finalPrompt,
             difficulty,
             num_questions: params.numQuestions ?? numQuestions,
+            subject: params.subject,
           }),
         });
         if (!res.ok) throw new Error("Quiz generation failed");

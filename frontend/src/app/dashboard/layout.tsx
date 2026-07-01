@@ -208,6 +208,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { label: "AI Tutor Chat", icon: "💬", path: "/dashboard/chat" },
     { label: "Practice Quizzes", icon: "📝", path: "/dashboard/quiz" },
     { label: "Study Planner", icon: "📅", path: "/dashboard/planner" },
+    { label: "Knowledge Mind Map", icon: "🕸", path: "/dashboard/mindmap" },
+    { label: "AI Analytics", icon: "📈", path: "/dashboard/analytics" },
   ];
 
   if (!user) {
@@ -389,16 +391,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <span style={hamburgerLineStyle} />
               </button>
             )}
-            <div style={searchWrapperStyle}>
-              <span style={{ marginRight: "8px" }}>🔍</span>
-              <input
-                type="text"
-                placeholder={isMobile ? "Search…" : "Search concepts, quizzes, topics..."}
-                style={searchInputStyle}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
           </div>
 
           <div style={topbarActionsStyle}>

@@ -226,6 +226,23 @@ export default function PlannerPage() {
 
   return (
     <div style={containerStyle} className="animate-fade-in">
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 8px;
+          height: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.02);
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.12);
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: var(--accent);
+        }
+      `}</style>
       {/* Header */}
       <div>
         <h1 style={titleStyle}>Study Planner</h1>
@@ -326,7 +343,7 @@ export default function PlannerPage() {
               </p>
             </div>
           ) : plan ? (
-            <div className="glass-panel animate-fade-in" style={planPanelStyle}>
+            <div className="glass-panel animate-fade-in custom-scrollbar" style={planPanelStyle}>
               {daysRemaining !== null && daysRemaining > 0 && (
                 <div style={badgeContainerStyle}>
                   <div style={daysBadgeStyle}>
@@ -500,6 +517,8 @@ const submitBtnStyle: React.CSSProperties = {
 const planPanelStyle: React.CSSProperties = {
   padding: "32px 36px",
   minHeight: "450px",
+  maxHeight: "650px",
+  overflowY: "auto",
 };
 
 const badgeContainerStyle: React.CSSProperties = {

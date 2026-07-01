@@ -118,6 +118,7 @@ html, body {
   transition: all var(--transition-smooth);
   font-family: inherit;
   user-select: none;
+  text-decoration: none;
 }
 
 .glass-btn-primary {

@@ -21,6 +21,7 @@ class User(Base):
     quiz_attempts = relationship("QuizAttempt", back_populates="user", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="user", cascade="all, delete-orphan")
     study_goals = relationship("StudyGoal", back_populates="user", cascade="all, delete-orphan")
+    flashcards = relationship("Flashcard", back_populates="user", cascade="all, delete-orphan")
 
 
 class Topic(Base):
@@ -96,3 +97,19 @@ class StudyGoal(Base):
 
     # Relationships
     user = relationship("User", back_populates="study_goals")
+
+
+class Flashcard(Base):
+    __tablename__ = "flashcards"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    front = Column(String, nullable=False)
+    back = Column(String, nullable=False)
+    subject = Column(String, nullable=False)
+    leitner_box = Column(Integer, default=1)
+    next_review = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    # Relationships
+    user = relationship("User", back_populates="flashcards")

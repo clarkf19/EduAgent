@@ -55,6 +55,7 @@ def run_quiz_generator(
     difficulty: str = "Intermediate",
     num_questions: int = 5,
     user_id: Optional[int] = None,
+    subject: Optional[str] = None,
 ) -> dict:
     """
     Generate an adaptive quiz from the user's knowledge base.
@@ -65,6 +66,7 @@ def run_quiz_generator(
         difficulty: 'Beginner', 'Intermediate', or 'Advanced'
         num_questions: Number of questions to generate (1-10)
         user_id: Optional user ID to filter ChromaDB search
+        subject: Optional subject name to filter search
     
     Returns:
         dict with 'questions' list and metadata
@@ -80,6 +82,8 @@ def run_quiz_generator(
     where_filter = {}
     if user_id is not None:
         where_filter["user_id"] = str(user_id)
+    if subject and subject != "All Subjects":
+        where_filter["subject"] = subject
 
     context_text = ""
     try:

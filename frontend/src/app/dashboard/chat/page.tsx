@@ -226,9 +226,61 @@ export default function ChatPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // --- Voice Mode States and Callbacks ---
+  const [isRecording, setIsRecording] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  const startSpeechRecognition = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Speech recognition is not supported in this browser.");
+      return;
+    }
+    
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+      return;
+    }
+    
+    const rec = new SpeechRecognition();
+    rec.continuous = false;
+    rec.interimResults = false;
+    rec.lang = "en-US";
+    
+    rec.onstart = () => {
+      setIsRecording(true);
+    };
+    
+    rec.onerror = (e: any) => {
+      console.error(e);
+      setIsRecording(false);
+    };
+    
+    rec.onend = () => {
+      setIsRecording(false);
+    };
+    
+    rec.onresult = (event: any) => {
+      const text = event.results[0][0].transcript;
+      setInput(prev => prev ? prev + " " + text : text);
+    };
+    
+    recognitionRef.current = rec;
+    rec.start();
+  }, [isRecording]);
+
   // Load history on mount
   useEffect(() => {
     setHistory(loadHistory());
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const q = params.get("question");
+      if (q) {
+        setInput(q);
+      }
+    }
   }, []);
 
   const scrollToBottom = () => {
@@ -462,6 +514,32 @@ export default function ChatPage() {
 
           {/* Input form */}
           <form onSubmit={handleSend} style={formStyle}>
+            <style>{`
+              @keyframes pulse-mic {
+                0% { transform: scale(1); opacity: 0.85; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+                100% { transform: scale(1.03); opacity: 1; box-shadow: 0 0 8px 2px rgba(239, 68, 68, 0.2); }
+              }
+            `}</style>
+            <button
+              type="button"
+              onClick={startSpeechRecognition}
+              style={{
+                background: isRecording ? "rgba(239, 68, 68, 0.2)" : "rgba(255,255,255,0.04)",
+                border: isRecording ? "1px solid rgba(239, 68, 68, 0.45)" : "1px solid var(--border-glass)",
+                borderRadius: "var(--border-radius)",
+                color: isRecording ? "#f87171" : "var(--text-secondary)",
+                padding: "0 16px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                transition: "all 0.2s ease",
+                animation: isRecording ? "pulse-mic 1s infinite alternate" : "none",
+              }}
+              title={isRecording ? "Stop recording speech" : "Voice input (Speech-to-Text)"}
+            >
+              🎤 {isRecording ? "Listening..." : "Speak"}
+            </button>
             <input
               type="text"
               value={input}

@@ -15,8 +15,12 @@ COPY . .
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
+# Enable standalone output (needed for Docker; not set when deploying via Vercel)
+ENV DOCKER_BUILD=true
+
 # Build the Next.js app (output: standalone for minimal image)
 RUN npm run build
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2: Run (production-minimal image)

@@ -312,6 +312,383 @@ function UploadProgressOverlay({
         )}
       </div>
     </div>
+}
+
+// --- Visual Coach Report Component ---
+function VisualCoachReport({ data, hasApiKey }: { data: any; hasApiKey: boolean }) {
+  const [checkedTasks, setCheckedTasks] = useState<Record<string, boolean>>({});
+
+  const toggleTask = (taskText: string) => {
+    setCheckedTasks(prev => ({
+      ...prev,
+      [taskText]: !prev[taskText]
+    }));
+  };
+
+  if (!data) return null;
+
+  // Determine colors based on persona
+  const getPersonaColor = (persona: string) => {
+    const p = (persona || "").toLowerCase();
+    if (p.includes("concept master") || p.includes("consistent") || p.includes("performer")) {
+      return { bg: "rgba(16, 185, 129, 0.08)", border: "rgba(16, 185, 129, 0.25)", text: "#10B981" };
+    }
+    if (p.includes("careless") || p.includes("fundamentals") || p.includes("memorizer")) {
+      return { bg: "rgba(245, 158, 11, 0.08)", border: "rgba(245, 158, 11, 0.25)", text: "#F59E0B" };
+    }
+    return { bg: "rgba(239, 68, 68, 0.08)", border: "rgba(239, 68, 68, 0.25)", text: "#EF4444" };
+  };
+
+  const colors = getPersonaColor(data.persona);
+
+  const metricLabels: Record<string, string> = {
+    conceptual_understanding: "Conceptual Understanding",
+    application_skills: "Application Skills",
+    speed: "Speed & Execution",
+    retention: "Knowledge Retention",
+    exam_readiness: "Exam Readiness"
+  };
+
+  const metricColors: Record<string, string> = {
+    conceptual_understanding: "#6366F1", // Indigo
+    application_skills: "#10B981", // Emerald
+    speed: "#F59E0B", // Amber
+    retention: "#EC4899", // Pink
+    exam_readiness: "#06B6D4" // Cyan
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }} className="animate-fade-in">
+      {/* Demo Warning */}
+      {!hasApiKey && (
+        <div style={{
+          background: "rgba(245, 158, 11, 0.06)",
+          border: "1px solid rgba(245, 158, 11, 0.2)",
+          borderRadius: "12px",
+          padding: "12px 16px",
+          fontSize: "12.5px",
+          color: "#F59E0B",
+          display: "flex",
+          gap: "10px",
+          alignItems: "center",
+          lineHeight: "1.4"
+        }}>
+          <span style={{ fontSize: "16px" }}>⚠️</span>
+          <span>
+            <strong>Demo Mode Active:</strong> Showing a simulated diagnostic report. Configure a <strong>Groq API Key</strong> in the sidebar settings for live AI generation.
+          </span>
+        </div>
+      )}
+
+      {/* Greeting Box */}
+      <div style={{
+        background: "rgba(255, 255, 255, 0.02)",
+        border: "1px solid rgba(255, 255, 255, 0.05)",
+        borderRadius: "16px",
+        padding: "20px",
+        display: "flex",
+        gap: "16px",
+        alignItems: "flex-start"
+      }}>
+        <div style={{
+          background: "rgba(99, 102, 241, 0.15)",
+          border: "1px solid rgba(99, 102, 241, 0.3)",
+          borderRadius: "50%",
+          width: "48px",
+          height: "48px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: "24px",
+          flexShrink: 0
+        }}>
+          👨‍🏫
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px", width: "100%" }}>
+          <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--accent)", textTransform: "uppercase", letterSpacing: "1px" }}>Coach Feedback</span>
+          <p style={{ margin: 0, fontSize: "14px", lineHeight: "1.6", color: "var(--text-primary)", fontWeight: 500 }}>
+            "{data.opening}"
+          </p>
+        </div>
+      </div>
+
+      {/* Learning Persona */}
+      <div style={{
+        background: colors.bg,
+        border: `1px solid ${colors.border}`,
+        borderRadius: "16px",
+        padding: "20px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px"
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "11px", fontWeight: 700, color: colors.text, background: `rgba(255, 255, 255, 0.03)`, padding: "4px 10px", borderRadius: "20px", border: `1px solid ${colors.border}` }}>
+            STUDENT PROFILE
+          </span>
+          <h4 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#fff" }}>
+            {data.persona}
+          </h4>
+        </div>
+        <p style={{ margin: 0, fontSize: "13.5px", lineHeight: "1.6", color: "var(--text-secondary)" }}>
+          {data.persona_explanation}
+        </p>
+      </div>
+
+      {/* Confidence Indicators */}
+      <div style={{
+        background: "rgba(255, 255, 255, 0.02)",
+        border: "1px solid rgba(255, 255, 255, 0.05)",
+        borderRadius: "16px",
+        padding: "20px"
+      }}>
+        <h4 style={{ margin: "0 0 16px 0", fontSize: "14px", fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: "8px" }}>
+          📊 Confidence Indicators
+        </h4>
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          {data.scores && Object.entries(data.scores).map(([metric, scoreValue]) => {
+            const barColor = metricColors[metric] || "var(--accent)";
+            const label = metricLabels[metric] || metric;
+            const scoreNum = Number(scoreValue) || 0;
+            return (
+              <div key={metric} style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", fontWeight: 500 }}>
+                  <span style={{ color: "var(--text-secondary)" }}>{label}</span>
+                  <span style={{ color: barColor, fontWeight: 700 }}>{scoreNum}%</span>
+                </div>
+                <div style={{ height: "8px", background: "rgba(255, 255, 255, 0.05)", borderRadius: "10px", overflow: "hidden", position: "relative" }}>
+                  <div style={{
+                    width: `${scoreNum}%`,
+                    height: "100%",
+                    background: barColor,
+                    borderRadius: "10px",
+                    boxShadow: `0 0 8px ${barColor}`,
+                    transition: "width 0.8s ease-out"
+                  }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Strengths & Weaknesses Grid */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px" }}>
+        {/* Strengths */}
+        <div style={{
+          background: "rgba(255, 255, 255, 0.01)",
+          border: "1px solid rgba(255, 255, 255, 0.04)",
+          borderRadius: "16px",
+          padding: "20px",
+          borderLeft: "4px solid #10B981"
+        }}>
+          <h4 style={{ margin: "0 0 10px 0", fontSize: "14px", fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ color: "#10B981" }}>✅</span> Core Strengths
+          </h4>
+          <p style={{ margin: 0, fontSize: "13px", lineHeight: "1.6", color: "var(--text-secondary)" }}>
+            {data.strengths}
+          </p>
+        </div>
+
+        {/* Weaknesses */}
+        <div style={{
+          background: "rgba(255, 255, 255, 0.01)",
+          border: "1px solid rgba(255, 255, 255, 0.04)",
+          borderRadius: "16px",
+          padding: "20px",
+          borderLeft: "4px solid #F59E0B"
+        }}>
+          <h4 style={{ margin: "0 0 10px 0", fontSize: "14px", fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ color: "#F59E0B" }}>🔍</span> Weakness Diagnosis
+          </h4>
+          <p style={{ margin: 0, fontSize: "13px", lineHeight: "1.6", color: "var(--text-secondary)" }}>
+            {data.weaknesses}
+          </p>
+        </div>
+      </div>
+
+      {/* Error Patterns Alert */}
+      {data.error_patterns && (
+        <div style={{
+          background: "rgba(99, 102, 241, 0.04)",
+          border: "1px solid rgba(99, 102, 241, 0.1)",
+          borderRadius: "16px",
+          padding: "20px"
+        }}>
+          <h4 style={{ margin: "0 0 8px 0", fontSize: "14px", fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: "8px" }}>
+            ⚠️ Error Pattern Detection
+          </h4>
+          <p style={{ margin: 0, fontSize: "13px", lineHeight: "1.6", color: "var(--text-secondary)" }}>
+            {data.error_patterns}
+          </p>
+        </div>
+      )}
+
+      {/* If I were your tutor callout */}
+      {data.tutor_advice && (
+        <div style={{
+          background: "linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(168, 85, 247, 0.08) 100%)",
+          border: "1px solid rgba(99, 102, 241, 0.15)",
+          borderRadius: "16px",
+          padding: "24px",
+          position: "relative",
+          overflow: "hidden"
+        }}>
+          {/* Decorative quote mark */}
+          <div style={{
+            position: "absolute",
+            top: "-15px",
+            right: "10px",
+            fontSize: "120px",
+            color: "rgba(99, 102, 241, 0.06)",
+            fontFamily: "serif",
+            userSelect: "none",
+            pointerEvents: "none"
+          }}>
+            “
+          </div>
+          
+          <h4 style={{ margin: "0 0 12px 0", fontSize: "14px", fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: "8px" }}>
+            💡 Tutor Recommendation
+          </h4>
+          <p style={{
+            margin: 0,
+            fontSize: "13.5px",
+            lineHeight: "1.7",
+            color: "var(--text-primary)",
+            fontStyle: "italic",
+            position: "relative",
+            zIndex: 1
+          }}>
+            {data.tutor_advice}
+          </p>
+        </div>
+      )}
+
+      {/* Action Plan */}
+      <div style={{
+        background: "rgba(255, 255, 255, 0.02)",
+        border: "1px solid rgba(255, 255, 255, 0.05)",
+        borderRadius: "16px",
+        padding: "20px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "20px"
+      }}>
+        <h4 style={{ margin: 0, fontSize: "14px", fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: "8px" }}>
+          📋 Interactive Action Plan
+        </h4>
+        
+        {/* Next 3 Days */}
+        <div>
+          <h5 style={{ margin: "0 0 10px 0", fontSize: "12px", color: "var(--accent)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            🗓️ Next 3 Days
+          </h5>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            {data.improvement_plan_3_days && data.improvement_plan_3_days.map((task: string, i: number) => {
+              const isChecked = !!checkedTasks[task];
+              return (
+                <div
+                  key={i}
+                  onClick={() => toggleTask(task)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                    background: isChecked ? "rgba(16, 185, 129, 0.03)" : "rgba(255,255,255,0.01)",
+                    border: isChecked ? "1px solid rgba(16, 185, 129, 0.15)" : "1px solid rgba(255,255,255,0.04)",
+                    padding: "10px 14px",
+                    borderRadius: "10px",
+                    cursor: "pointer",
+                    transition: "all 0.2s"
+                  }}
+                >
+                  <div style={{
+                    width: "18px",
+                    height: "18px",
+                    borderRadius: "4px",
+                    border: isChecked ? "2px solid #10B981" : "2px solid rgba(255,255,255,0.3)",
+                    background: isChecked ? "#10B981" : "transparent",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "all 0.15s",
+                    flexShrink: 0
+                  }}>
+                    {isChecked && <span style={{ color: "#000", fontSize: "12px", fontWeight: 900 }}>✓</span>}
+                  </div>
+                  <span style={{
+                    fontSize: "13px",
+                    color: isChecked ? "var(--text-secondary)" : "var(--text-primary)",
+                    textDecoration: isChecked ? "line-through" : "none",
+                    lineHeight: "1.4"
+                  }}>
+                    {task}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Next Week */}
+        <div>
+          <h5 style={{ margin: "0 0 10px 0", fontSize: "12px", color: "rgba(168, 85, 247, 0.8)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            🗓️ Next Week
+          </h5>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            {data.improvement_plan_week && data.improvement_plan_week.map((task: string, i: number) => {
+              const isChecked = !!checkedTasks[task];
+              return (
+                <div
+                  key={i}
+                  onClick={() => toggleTask(task)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                    background: isChecked ? "rgba(16, 185, 129, 0.03)" : "rgba(255,255,255,0.01)",
+                    border: isChecked ? "1px solid rgba(16, 185, 129, 0.15)" : "1px solid rgba(255,255,255,0.04)",
+                    padding: "10px 14px",
+                    borderRadius: "10px",
+                    cursor: "pointer",
+                    transition: "all 0.2s"
+                  }}
+                >
+                  <div style={{
+                    width: "18px",
+                    height: "18px",
+                    borderRadius: "4px",
+                    border: isChecked ? "2px solid #10B981" : "2px solid rgba(255,255,255,0.3)",
+                    background: isChecked ? "#10B981" : "transparent",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "all 0.15s",
+                    flexShrink: 0
+                  }}>
+                    {isChecked && <span style={{ color: "#000", fontSize: "12px", fontWeight: 900 }}>✓</span>}
+                  </div>
+                  <span style={{
+                    fontSize: "13px",
+                    color: isChecked ? "var(--text-secondary)" : "var(--text-primary)",
+                    textDecoration: isChecked ? "line-through" : "none",
+                    lineHeight: "1.4"
+                  }}>
+                    {task}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Motivational Closing */}
+      <p style={{ margin: "8px 0 0 0", textAlign: "center", fontSize: "13.5px", fontStyle: "italic", color: "var(--text-secondary)", lineHeight: "1.6" }}>
+        "{data.motivational_closing}"
+      </p>
+    </div>
   );
 }
 
@@ -333,7 +710,10 @@ export default function QuizPage() {
   const [documents, setDocuments] = useState<any[]>([]);
   const [savingAttempt, setSavingAttempt] = useState(false);
   const [coachReport, setCoachReport] = useState<string | null>(null);
+  const [coachReportData, setCoachReportData] = useState<any | null>(null);
+  const [startTime, setStartTime] = useState<number | null>(null);
   const [coachLoading, setCoachLoading] = useState(false);
+
 
   const [theoryResult, setTheoryResult] = useState<{
     answer: string;
@@ -514,6 +894,7 @@ export default function QuizPage() {
         setQuestions(data.questions);
         setAnswers({});
         setCurrentIdx(0);
+        setStartTime(Date.now());
         setStep("running");
       } else {
         // Theory Explainer Mode
@@ -599,8 +980,10 @@ export default function QuizPage() {
     setSavingAttempt(true);
     setCoachLoading(true);
     setCoachReport(null);
+    setCoachReportData(null);
 
     const score = calculateScore();
+    const timeTaken = startTime ? Math.round((Date.now() - startTime) / 1000) : 0;
     
     const attemptPromise = apiFetch("/api/quiz/attempt", {
       method: "POST",
@@ -610,6 +993,7 @@ export default function QuizPage() {
         difficulty,
         topic,
         subject: subject === "All Subjects" ? undefined : subject,
+        time_taken: timeTaken,
       }),
     }).then(async (res) => {
       if (res.ok) {
@@ -625,17 +1009,20 @@ export default function QuizPage() {
         score,
         subject: subject === "All Subjects" ? undefined : subject,
         topic,
+        time_taken: timeTaken,
       }),
     }).then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setCoachReport(data.report);
+        setCoachReportData(data);
       } else {
         setCoachReport("⚠️ Failed to generate AI Coach Report. Please verify your Groq API Key and connection.");
       }
     }).catch(() => {
       setCoachReport("⚠️ Network error while fetching AI Coach Report.");
     });
+
 
     try {
       await Promise.all([attemptPromise, reportPromise]);
@@ -652,6 +1039,8 @@ export default function QuizPage() {
     setCurrentIdx(0);
     setTheoryResult(null);
     setCoachReport(null);
+    setCoachReportData(null);
+    setStartTime(null);
   };
 
   const getOptionLetter = (optStr: string) => {
@@ -1176,39 +1565,15 @@ export default function QuizPage() {
                 )}
 
                 {!coachLoading && coachReport && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }} className="animate-fade-in">
-                    {!hasApiKey && (
-                      <div style={{
-                        background: "rgba(245, 158, 11, 0.08)",
-                        border: "1px solid rgba(245, 158, 11, 0.25)",
-                        borderRadius: "8px",
-                        padding: "12px 16px",
-                        fontSize: "12.5px",
-                        color: "#F59E0B",
-                        display: "flex",
-                        gap: "8px",
-                        alignItems: "center",
-                        marginBottom: "8px",
-                        lineHeight: "1.4"
-                      }}>
-                        <span>⚠️</span>
-                        <span>
-                          <strong>Demo Mode Active:</strong> Showing a simulated learning analysis. Set your <strong>Groq API Key</strong> in the sidebar settings menu for live personalized feedback.
-                        </span>
+                  coachReportData && coachReportData.persona ? (
+                    <VisualCoachReport data={coachReportData} hasApiKey={hasApiKey} />
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }} className="animate-fade-in">
+                      <div style={{ lineHeight: "1.6", fontSize: "13.5px", color: "var(--text-secondary)" }}>
+                        <MarkdownRenderer text={coachReport} onSourceClick={() => {}} />
                       </div>
-                    )}
-
-                    <div style={{
-                      lineHeight: "1.6",
-                      fontSize: "13.5px",
-                      color: "var(--text-secondary)"
-                    }}>
-                      <MarkdownRenderer
-                        text={coachReport}
-                        onSourceClick={() => {}}
-                      />
                     </div>
-                  </div>
+                  )
                 )}
               </div>
 

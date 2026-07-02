@@ -213,10 +213,23 @@ class CoachReportRequest(BaseModel):
     score: float
     subject: Optional[str] = None
     topic: Optional[str] = None
+    time_taken: Optional[int] = None  # in seconds
 
 class CoachReportResponse(BaseModel):
-    report: str
+    report: str  # For fallback and copy-to-clipboard functionality
     model: str
+    opening: Optional[str] = None
+    persona: Optional[str] = None
+    persona_explanation: Optional[str] = None
+    strengths: Optional[str] = None
+    weaknesses: Optional[str] = None
+    error_patterns: Optional[str] = None
+    tutor_advice: Optional[str] = None
+    scores: Optional[dict] = None
+    improvement_plan_3_days: Optional[List[str]] = None
+    improvement_plan_week: Optional[List[str]] = None
+    motivational_closing: Optional[str] = None
+
 
 
 # --- Flashcard Schemas ---

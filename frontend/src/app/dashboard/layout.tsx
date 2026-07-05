@@ -493,7 +493,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Page Content */}
         <main style={contentStyle}>{children}</main>
 
-        {/* GROQ Key Modal */}
+        {/* About / Info Modal */}
         {isSettingsOpen && (
           <div style={modalOverlayStyle} onClick={() => setIsSettingsOpen(false)}>
             <div style={modalContentStyle} onClick={(e) => e.stopPropagation()}>
@@ -504,61 +504,36 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 ✕
               </button>
               <h3 style={{ fontSize: "20px", fontWeight: "600", marginBottom: "12px", display: "flex", alignItems: "center", gap: "8px" }}>
-                🔑 Groq API Settings
+                ⚙️ About EduAgent
               </h3>
-              <p style={{ color: "var(--text-secondary)", fontSize: "14px", lineHeight: "1.5", marginBottom: "20px" }}>
-                Provide a Google Groq API Key to enable the platform's multi-agent AI features, including generating custom quizzes on any topic using general knowledge, answering complex conceptual questions, and creating custom study planners.
+              <p style={{ color: "var(--text-secondary)", fontSize: "14px", lineHeight: "1.65", marginBottom: "20px" }}>
+                EduAgent is a multi-agent AI learning assistant. Upload your lecture notes and PDFs, then generate adaptive quizzes, mind maps, AI-tutor chats, and personalized study plans — all powered by your own knowledge base.
               </p>
-              
-              <div style={{ marginBottom: "20px" }}>
-                <label style={{ display: "block", fontSize: "12px", fontWeight: "600", color: "var(--text-muted)", marginBottom: "8px", textTransform: "uppercase" }}>
-                  Groq API Key
-                </label>
-                <input
-                  type="password"
-                  placeholder="AIzaSy..."
-                  value={groqKey}
-                  onChange={(e) => setgroqKey(e.target.value)}
-                  style={modalInputStyle}
-                />
-                <span style={{ display: "block", fontSize: "12px", color: "var(--text-muted)", marginTop: "6px" }}>
-                  Don't have a key? Get one for free at{" "}
-                  <a
-                    href="https://aistudio.google.com/"
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ color: "var(--accent)", textDecoration: "underline" }}
-                  >
-                    Google AI Studio
-                  </a>.
-                </span>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "20px" }}>
+                {[
+                  { icon: "🤖", label: "AI Engine", value: "LLaMA 3.3-70B via Groq" },
+                  { icon: "🗄️", label: "Vector Search", value: "ChromaDB (RAG)" },
+                  { icon: "📊", label: "ML Prediction", value: "Random Forest (scikit-learn)" },
+                  { icon: "🔒", label: "Auth", value: "JWT — all data is private to your account" },
+                ].map(({ icon, label, value }) => (
+                  <div key={label} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 14px",
+                    background: "rgba(255,255,255,0.03)", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.06)" }}>
+                    <span style={{ fontSize: "18px" }}>{icon}</span>
+                    <div>
+                      <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>{label}</div>
+                      <div style={{ fontSize: "13px", color: "var(--text-primary)", marginTop: "2px" }}>{value}</div>
+                    </div>
+                  </div>
+                ))}
               </div>
 
-              <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
-                {groqKey && (
-                  <button
-                    onClick={handleClearKey}
-                    style={clearBtnStyle}
-                  >
-                    Clear Key
-                  </button>
-                )}
-                <button
-                  onClick={() => {
-                    handleSaveKey();
-                    setIsSettingsOpen(false);
-                  }}
-                  style={saveBtnStyle}
-                >
-                  Save Key
-                </button>
-              </div>
-
-              {saveSuccess && (
-                <div style={toastStyle}>
-                  Changes saved successfully!
-                </div>
-              )}
+              <button
+                onClick={() => setIsSettingsOpen(false)}
+                style={saveBtnStyle}
+              >
+                Close
+              </button>
             </div>
           </div>
         )}

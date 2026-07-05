@@ -316,7 +316,7 @@ function UploadProgressOverlay({
 }
 
 // --- Visual Coach Report Component ---
-function VisualCoachReport({ data, hasApiKey }: { data: any; hasApiKey: boolean }) {
+function VisualCoachReport({ data }: { data: any }) {
   const [checkedTasks, setCheckedTasks] = useState<Record<string, boolean>>({});
 
   const toggleTask = (task: string) => setCheckedTasks(prev => ({ ...prev, [task]: !prev[task] }));
@@ -380,15 +380,7 @@ function VisualCoachReport({ data, hasApiKey }: { data: any; hasApiKey: boolean 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }} className="animate-fade-in">
 
-      {/* Demo Banner */}
-      {!hasApiKey && (
-        <div style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.2)",
-          borderRadius: "10px", padding: "10px 14px", fontSize: "12.5px", color: "#F59E0B",
-          display: "flex", gap: "8px", alignItems: "center", lineHeight: "1.4" }}>
-          <span>⚠️</span>
-          <span><strong>Demo Mode:</strong> Simulated report. Add a <strong>Groq API Key</strong> in sidebar settings for live analysis.</span>
-        </div>
-      )}
+
 
       {/* Persona + Confidence Row */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "16px", alignItems: "stretch" }}>
@@ -556,7 +548,7 @@ export default function QuizPage() {
   } | null>(null);
 
   const [selectedSource, setSelectedSource] = useState<any | null>(null);
-  const [hasApiKey, setHasApiKey] = useState(false);
+
 
   // ── Upload-in-quiz state ──────────────────────────────────────────────────
   const [uploadSubject, setUploadSubject] = useState("Other");
@@ -573,11 +565,7 @@ export default function QuizPage() {
   const stageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasTriggeredRef = useRef(false);
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setHasApiKey(Boolean(localStorage.getItem("groq_api_key")));
-    }
-  }, []);
+
 
   const animateStages = (onComplete: () => void): (() => void) => {
     let cancelled = false;
@@ -744,7 +732,7 @@ export default function QuizPage() {
         setStep("theory");
       }
     } catch (err) {
-      alert(`Failed to generate ${params.mode === "mcq" ? "quiz" : "theory explanation"}. Please ensure the backend is running and your Groq API Key is configured correctly.`);
+      alert(`Failed to generate ${params.mode === "mcq" ? "quiz" : "theory explanation"}. Please ensure the backend server is running and try again.`);
     } finally {
       setLoading(false);
     }
@@ -850,7 +838,7 @@ export default function QuizPage() {
         setCoachReport(data.report);
         setCoachReportData(data);
       } else {
-        setCoachReport("⚠️ Failed to generate AI Coach Report. Please verify your Groq API Key and connection.");
+        setCoachReport("⚠️ Failed to generate AI Coach Report. Please try again.");
       }
     }).catch(() => {
       setCoachReport("⚠️ Network error while fetching AI Coach Report.");
@@ -1399,7 +1387,7 @@ export default function QuizPage() {
 
                 {!coachLoading && coachReport && (
                   coachReportData && coachReportData.persona ? (
-                    <VisualCoachReport data={coachReportData} hasApiKey={hasApiKey} />
+                    <VisualCoachReport data={coachReportData} />
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }} className="animate-fade-in">
                       <div style={{ lineHeight: "1.6", fontSize: "13.5px", color: "var(--text-secondary)" }}>

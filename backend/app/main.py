@@ -1143,17 +1143,15 @@ def get_quiz_coach_report(
         return CoachReportResponse(
             report=res["report"],
             model=res["model"],
-            opening=res.get("opening"),
             persona=res.get("persona"),
-            persona_explanation=res.get("persona_explanation"),
+            summary=res.get("summary"),
             strengths=res.get("strengths"),
             weaknesses=res.get("weaknesses"),
-            error_patterns=res.get("error_patterns"),
+            patterns=res.get("patterns"),
             tutor_advice=res.get("tutor_advice"),
-            scores=res.get("scores"),
-            improvement_plan_3_days=res.get("improvement_plan_3_days"),
-            improvement_plan_week=res.get("improvement_plan_week"),
-            motivational_closing=res.get("motivational_closing")
+            next_steps=res.get("next_steps"),
+            challenge_problems=res.get("challenge_problems"),
+            confidence=res.get("confidence"),
         )
     except Exception as e:
         logger.exception("Coach report agent failed")

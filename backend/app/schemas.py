@@ -216,19 +216,17 @@ class CoachReportRequest(BaseModel):
     time_taken: Optional[int] = None  # in seconds
 
 class CoachReportResponse(BaseModel):
-    report: str  # For fallback and copy-to-clipboard functionality
+    report: str  # Markdown for copy-to-clipboard
     model: str
-    opening: Optional[str] = None
     persona: Optional[str] = None
-    persona_explanation: Optional[str] = None
-    strengths: Optional[str] = None
-    weaknesses: Optional[str] = None
-    error_patterns: Optional[str] = None
+    summary: Optional[str] = None
+    strengths: Optional[List[str]] = None
+    weaknesses: Optional[List[str]] = None
+    patterns: Optional[List[str]] = None
     tutor_advice: Optional[str] = None
-    scores: Optional[dict] = None
-    improvement_plan_3_days: Optional[List[str]] = None
-    improvement_plan_week: Optional[List[str]] = None
-    motivational_closing: Optional[str] = None
+    next_steps: Optional[List[str]] = None
+    challenge_problems: Optional[List[str]] = None
+    confidence: Optional[int] = None
 
 
 
